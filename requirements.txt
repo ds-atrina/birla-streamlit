@@ -1,0 +1,4 @@
+streamlit 
+plotly
+langchain-google-genai
+dotenv
