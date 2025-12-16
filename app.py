@@ -5,10 +5,17 @@ import math
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-import plotly.express as px
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 from ast import literal_eval
+
+from nudge_tag import (
+    TAG_SCHEMA,
+    get_tag_family,
+    assign_rule_tag_v2,
+    assign_llm_tag,
+    get_strength_for_tag,
+)
 
 load_dotenv()
 
@@ -19,7 +26,6 @@ st.set_page_config(page_title="TSM Action Dashboard", page_icon="🎯", layout="
 
 st.markdown("""
 <style>
-    /* Simplified 3-color system */
     .main-header {
         font-size: 2.5rem;
         font-weight: 800;
@@ -30,7 +36,6 @@ st.markdown("""
         margin-bottom: 1rem;
     }
 
-    /* Only 3 status banners */
     .status-healthy {
         background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
         padding: 1.5rem 2rem;
@@ -42,7 +47,6 @@ st.markdown("""
         font-weight: 700;
         border: 2px solid rgba(255,255,255,0.2);
     }
-    
     .status-attention {
         background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
         padding: 1.5rem 2rem;
@@ -54,7 +58,6 @@ st.markdown("""
         font-weight: 700;
         border: 2px solid rgba(255,255,255,0.2);
     }
-    
     .status-risk {
         background: linear-gradient(135deg, #f56565 0%, #c53030 100%);
         padding: 1.5rem 2rem;
@@ -67,7 +70,6 @@ st.markdown("""
         border: 2px solid rgba(255,255,255,0.2);
     }
 
-    /* Simplified metric cards */
     .metric-card {
         background: white;
         padding: 1.5rem;
@@ -76,7 +78,6 @@ st.markdown("""
         margin: 0.75rem 0;
         box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
-    
     .metric-card.healthy { border-left-color: #48bb78; }
     .metric-card.attention { border-left-color: #ed8936; }
     .metric-card.risk { border-left-color: #f56565; }
@@ -89,13 +90,11 @@ st.markdown("""
         letter-spacing: 0.5px;
         margin-bottom: 0.5rem;
     }
-    
     .metric-value {
         font-size: 2rem;
         font-weight: 800;
         margin: 0.5rem 0;
     }
-    
     .metric-plain {
         font-size: 1.1rem;
         color: #4a5568;
@@ -103,7 +102,6 @@ st.markdown("""
         font-weight: 500;
     }
 
-    /* NBA Card - Most Important */
     .nba-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 2rem;
@@ -112,13 +110,11 @@ st.markdown("""
         margin: 1.5rem 0;
         box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
     }
-    
     .nba-title {
         font-size: 1.5rem;
         font-weight: 800;
         margin-bottom: 1rem;
     }
-    
     .nba-action {
         background: rgba(255,255,255,0.2);
         padding: 1rem;
@@ -128,7 +124,6 @@ st.markdown("""
         border-left: 4px solid white;
     }
 
-    /* Action cards */
     .action-card {
         background: white;
         border-radius: 12px;
@@ -137,21 +132,18 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(0,0,0,0.08);
         border-left: 5px solid #667eea;
     }
-    
     .action-title {
         font-size: 1.1rem;
         font-weight: 700;
         color: #2d3748;
         margin-bottom: 0.5rem;
     }
-    
     .action-why {
         font-size: 0.95rem;
         color: #4a5568;
         margin: 0.5rem 0;
         line-height: 1.6;
     }
-    
     .action-impact {
         background: #f7fafc;
         padding: 0.75rem;
@@ -162,7 +154,6 @@ st.markdown("""
         font-weight: 600;
     }
 
-    /* Dealer header */
     .dealer-header {
         background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
         padding: 2rem;
@@ -173,7 +164,6 @@ st.markdown("""
         position: relative;
         overflow: visible;
     }
-
     .segment-stamp {
         position: absolute;
         top: -20px;
@@ -196,28 +186,19 @@ st.markdown("""
         transform: rotate(-8deg);
         padding: 0.5rem;
     }
+    .segment-stamp span { display: block; line-height: 1.2; }
 
-    .segment-stamp span {
-        display: block;
-        line-height: 1.2;
-    }
-    
     .dealer-title {
         font-size: 1.8rem;
         font-weight: 800;
         margin-bottom: 0.5rem;
     }
-    
     .dealer-subtitle {
         font-size: 1rem;
         opacity: 0.9;
     }
 
-    /* Persona badges */
-    .badge-row {
-        margin-top: 0.5rem;
-    }
-
+    .badge-row { margin-top: 0.5rem; }
     .badge {
         display: inline-block;
         padding: 0.25rem 0.75rem;
@@ -231,14 +212,12 @@ st.markdown("""
         background: #edf2f7;
         color: #2d3748;
     }
-
     .badge-new { background: #c3dafe; color: #2c5282; }
     .badge-reactivated { background: #faf089; color: #744210; }
     .badge-high-freq { background: #9ae6b4; color: #22543d; }
     .badge-low-freq { background: #fbd38d; color: #7c2d12; }
     .badge-dropping { background: #fed7d7; color: #742a2a; }
 
-    /* Product gaps box */
     .product-gaps-box {
         background: #f7fafc;
         border-radius: 10px;
@@ -254,521 +233,7 @@ st.markdown("""
 # -----------------------------
 # Helpers
 # -----------------------------
-def safe_get(d, k, default=0):
-    """
-    Strict safe_get:
-    - If key is missing -> raise KeyError so you immediately see which column is wrong.
-    - If value is NaN -> return default.
-    - If value is numeric-like -> cast to float.
-    """
-    if k not in d:
-        raise KeyError(
-            f"Column '{k}' not found in current row. "
-            f"Available keys (sample): {list(d.keys())[:15]}"
-        )
-    
-    v = d.get(k, default)
-    if pd.isna(v):
-        return default
 
-    try:
-        return float(v)
-    except Exception:
-        return v
-
-def fmt_rs(x):
-    try:
-        val = float(x)
-        if val >= 10000000:
-            return f"₹{val/10000000:.2f}Cr"
-        elif val >= 100000:
-            return f"₹{val/100000:.2f}L"
-        elif val >= 1000:
-            return f"₹{val/1000:.1f}K"
-        else:
-            return f"₹{val:.0f}"
-    except Exception:
-        return "₹0"
-
-def get_dealer_data(df, dealer_id):
-    dealer = df[df['dealer_composite_id'] == dealer_id]
-    if len(dealer) > 0:
-        return dealer.iloc[0].to_dict()
-    return None
-
-def create_revenue_benchmark_chart(dealer):
-    dealer_90d_average_monthly = safe_get(dealer, 'total_revenue_last_90d', 0) / 3.0
-    dealer_180d_average_monthly = safe_get(dealer, 'avg_monthly_revenue_180d', 0)
-    dealer_lifetime_average_monthly = safe_get(dealer, 'avg_monthly_revenue_lifetime', 0.0)
-    
-    cluster_monthly = safe_get(dealer, 'cluster_avg_monthly_revenue_last_90d', 0)
-    cluster_monthly_180d = safe_get(dealer, 'cluster_avg_monthly_revenue_180d', 0)
-    cluster_monthly_lifetime = safe_get(dealer, 'cluster_avg_monthly_revenue_lifetime', 0)
-    terr_monthly = safe_get(dealer, 'territory_avg_monthly_revenue_last_90d', 0)
-    terr_monthly_180d = safe_get(dealer, 'territory_avg_monthly_revenue_180d', 0)
-    terr_monthly_lifetime = safe_get(dealer, 'territory_avg_monthly_revenue_lifetime', 0)
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        name='This Dealer', 
-        x=['3-Mo Avg', '6-Mo Avg', 'Lifetime Avg'], 
-        y=[dealer_90d_average_monthly, dealer_180d_average_monthly, dealer_lifetime_average_monthly], 
-        marker_color='#667eea', 
-        text=[fmt_rs(dealer_90d_average_monthly), fmt_rs(dealer_180d_average_monthly), fmt_rs(dealer_lifetime_average_monthly)],
-        textposition='outside', 
-        textfont_size=10
-    ))
-    
-    fig.add_trace(go.Scatter(
-        name='Cluster Avg',
-        x=['3-Mo Avg', '6-Mo Avg', 'Lifetime Avg'],
-        y=[cluster_monthly, cluster_monthly_180d, cluster_monthly_lifetime],
-        mode='lines+markers',
-        line=dict(width=3, dash='dash', color='#48bb78'),
-        marker=dict(size=8, color='#48bb78')
-    ))
-    
-    fig.add_trace(go.Scatter(
-        name='Territory Avg',
-        x=['3-Mo Avg', '6-Mo Avg', 'Lifetime Avg'],
-        y=[terr_monthly, terr_monthly_180d, terr_monthly_lifetime],
-        mode='lines+markers',
-        line=dict(width=3, dash='dot', color='#ed8936'),
-        marker=dict(size=8, color='#ed8936')
-    ))
-    
-    fig.update_layout(
-        title='Monthly Revenue Benchmarking vs Peers',
-        height=400,
-        showlegend=True,
-        template='plotly_white',
-        yaxis_title='Avg Monthly Revenue (₹)',
-        margin=dict(t=60, b=60, l=60, r=20)
-    )
-    return fig
-
-def create_order_frequency_benchmark(dealer):
-    dealer_orders = safe_get(dealer, 'total_orders_last_90d', 0)
-    cluster_avg = safe_get(dealer, 'cluster_avg_orders_last_90d', 0)
-    terr_avg = safe_get(dealer, 'territory_avg_orders_last_90d', 0)
-    terr_p80 = safe_get(dealer, 'territory_p80_orders_last_90d', 0)
-    
-    fig = go.Figure(data=[
-        go.Bar(
-            x=['This Dealer', 'Cluster Avg', 'Territory Avg', 'Territory Top 20%'],
-            y=[dealer_orders, cluster_avg, terr_avg, terr_p80],
-            marker_color=['#667eea', '#48bb78', '#48bb78', '#48bb78'],
-            text=[int(dealer_orders), f'{cluster_avg:.0f}', f'{terr_avg:.0f}', f'{terr_p80:.0f}'],
-            textposition='outside',
-            textfont_size=11
-        )
-    ])
-    fig.update_layout(
-        title='Order Frequency Comparison (Last 90 Days)',
-        height=400,
-        template='plotly_white',
-        yaxis_title='Number of Orders',
-        showlegend=False,
-        margin=dict(t=60, b=60, l=60, r=20)
-    )
-    return fig
-
-def create_subbrand_mix_chart(dealer):
-    """
-    Sub-brand mix pie chart using 180d revenue shares.
-    """
-    subbrands = {
-        "Allwood":      safe_get(dealer, "share_revenue_allwood_180d", 0.0),
-        "Prime":        safe_get(dealer, "share_revenue_prime_180d", 0.0),
-        "Allwood Pro":  safe_get(dealer, "share_revenue_allwoodpro_180d", 0.0),
-        "One":          safe_get(dealer, "share_revenue_one_180d", 0.0),
-        "Calista":      safe_get(dealer, "share_revenue_calista_180d", 0.0),
-        "Style":        safe_get(dealer, "share_revenue_style_180d", 0.0),
-        "AllDry":       safe_get(dealer, "share_revenue_alldry_180d", 0.0),
-        "Artist":       safe_get(dealer, "share_revenue_artist_180d", 0.0),
-        "Sample Kit":   safe_get(dealer, "share_revenue_samplekit_180d", 0.0),
-        "Collaterals":  safe_get(dealer, "share_revenue_collaterals_180d", 0.0),
-    }
-
-    subbrands = {k: v for k, v in subbrands.items() if v and v > 0}
-
-    if not subbrands:
-        return None
-
-    fig = go.Figure(data=[go.Pie(
-        labels=list(subbrands.keys()),
-        values=list(subbrands.values()),
-        hole=0.4,
-        textinfo="label+percent",
-        textposition="inside",
-        textfont_size=11,
-    )])
-
-    fig.update_layout(
-        title="Sub-brand Revenue Mix (Last 6 Months)",
-        height=400,
-        template="plotly_white",
-        showlegend=True,
-        legend=dict(
-            orientation="v",
-            yanchor="middle",
-            y=0.5,
-            xanchor="left",
-            x=1.02
-        ),
-        margin=dict(t=60, b=20, l=20, r=120),
-    )
-    return fig
-
-def get_dealer_stamp(dealer: dict):
-    """Returns a stamp label for the dealer header"""
-    is_new = safe_get(dealer, 'is_new_dealer', 0)
-    has_no_orders = safe_get(dealer, 'has_no_orders', 0)
-    
-    if has_no_orders == 1:
-        return "No Orders Yet"
-    
-    if is_new == 1:
-        return "New Dealer"
-    
-    prev_90d_rev = safe_get(dealer, 'total_revenue_prev_90d', 0)
-    last_90d_rev = safe_get(dealer, 'total_revenue_last_90d', 0)
-    
-    if prev_90d_rev == 0 and last_90d_rev == 0:
-        return "⚠️ No Activity"
-    
-    if safe_get(dealer, 'dealer_is_reactivated', 0) == 1:
-        return "🔄 Reactivated"
-    
-    if safe_get(dealer, 'dealer_is_dropping_off', 0) == 1:
-        return "⚠️ Dropping Off"
-    
-    return None
-
-def get_dealer_badges(dealer: dict):
-    """Badges for dealer personas"""
-    badges = []
-    
-    if safe_get(dealer, 'dealer_is_high_freq', 0) == 1:
-        badges.append(("⚡ High Frequency", "badge-high-freq"))
-        
-    if safe_get(dealer, 'dealer_is_low_freq', 0) == 1:
-        badges.append(("🐌 Low Frequency", "badge-low-freq"))
-
-    if safe_get(dealer, 'is_new_dealer', 0) == 1:
-        badges.append(("🆕 New", "badge-new"))
-
-    if safe_get(dealer, 'dealer_is_reactivated', 0) == 1:
-        badges.append(("🔄 Reactivated", "badge-reactivated"))
-
-    if safe_get(dealer, 'dealer_is_dropping_off', 0) == 1:
-        badges.append(("⚠️ Dropping Off", "badge-dropping"))
-
-    if 'dealer_segment_OP' in dealer:
-        seg_op = dealer.get('dealer_segment_OP')
-        if seg_op and not pd.isna(seg_op):
-            badges.append((f"🔵 Ordering: {seg_op}", "badge"))
-    
-    if 'dealer_segment_BG' in dealer:
-        seg_bg = dealer.get('dealer_segment_BG')
-        if seg_bg and not pd.isna(seg_bg):
-            badges.append((f"🟢 Billing: {seg_bg}", "badge"))
-    
-    return badges
-
-def get_dealer_status(dealer: dict):
-    """Status banner from recency, churn risk & trend"""
-    has_no_orders = safe_get(dealer, 'has_no_orders', 0)
-    is_new = safe_get(dealer, 'is_new_dealer', 0)
-    
-    # Special case: New dealer with no orders
-    if has_no_orders == 1 and is_new == 1:
-        return "attention", "🟡 NEW DEALER - NO ORDERS YET", "Dealer onboarded but hasn't placed first order"
-    
-    # Special case: Existing dealer with no orders (should be rare)
-    if has_no_orders == 1:
-        return "risk", "🔴 NO ORDER HISTORY", "Dealer exists in system but has never ordered"
-    
-    dsl = safe_get(dealer, 'days_since_last_order', 0)
-    avg_gap = safe_get(dealer, 'avg_order_gap_180d', 0)
-    trend = safe_get(dealer, 'pct_revenue_trend_90d', 0)
-    churn_risk = safe_get(dealer, 'order_churn_risk_score', 0)
-    
-    # Priority 1: Recency
-    if dsl > 90:
-        return "risk", "🚨 INACTIVE", f"No order in {dsl} days - dealer may be lost"
-    elif dsl > 45:
-        return "risk", "🔴 AT RISK", f"No order in {dsl} days - urgent follow-up needed"
-    
-    # Priority 2: Churn Risk
-    if churn_risk > 1.5:
-        return "risk", "🔴 HIGH CHURN RISK", f"Risk score {churn_risk:.1f} - immediate action required"
-    
-    # Priority 3: Trend
-    if trend < -10:
-        return "attention", "🟡 DECLINING", f"Sales down {abs(trend):.0f}% - needs attention"
-    
-    # Priority 4: Growth check
-    if trend > 10 and dsl < 30:
-        return "healthy", "🟢 GROWING", f"Sales up {trend:.0f}% - capitalize on momentum"
-    
-    # Default stable
-    if dsl < 30:
-        return "healthy", "🟢 STABLE", "Regular ordering pattern - maintain engagement"
-    else:
-        return "attention", "🟡 NEEDS FOLLOW-UP", f"Last order {dsl} days ago - schedule visit"
-
-def get_subbrand_nudges(dealer: dict):
-    actions = []
-    # =====================================================
-    # SUB-BRAND MIX & WALLET EXPANSION
-    # =====================================================
-    share_allwood     = safe_get(dealer, "share_revenue_allwood_180d", 0.0)
-    share_prime       = safe_get(dealer, "share_revenue_prime_180d", 0.0)
-    share_allwoodpro  = safe_get(dealer, "share_revenue_allwoodpro_180d", 0.0)
-    share_one         = safe_get(dealer, "share_revenue_one_180d", 0.0)
-    share_calista     = safe_get(dealer, "share_revenue_calista_180d", 0.0)
-    share_style       = safe_get(dealer, "share_revenue_style_180d", 0.0)
-    share_alldry      = safe_get(dealer, "share_revenue_alldry_180d", 0.0)
-    share_artist      = safe_get(dealer, "share_revenue_artist_180d", 0.0)
-    share_samplekit   = safe_get(dealer, "share_revenue_samplekit_180d", 0.0)
-    share_collaterals = safe_get(dealer, "share_revenue_collaterals_180d", 0.0)
-
-    subbrand_shares = {
-        "Allwood":      share_allwood,
-        "Prime":        share_prime,
-        "Allwood Pro":  share_allwoodpro,
-        "One":          share_one,
-        "Calista":      share_calista,
-        "Style":        share_style,
-        "AllDry":       share_alldry,
-        "Artist":       share_artist,
-        "Sample Kit":   share_samplekit,
-        "Collaterals":  share_collaterals,
-    }
-
-    # Identify the dominant brand (>50%)
-    dominant_brand = None
-    dominant_share = 0
-    for name, share in subbrand_shares.items():
-        if share > 0.5:
-            dominant_brand = name
-            dominant_share = share
-            break
-    
-    if not dominant_brand:
-        return actions
-    # ---------------------------------------------------------
-    # PRODUCT MIX ACTIONS (Only 1 max to keep it simple)
-    # ---------------------------------------------------------
-    if dominant_brand == "Style":
-        actions.append(
-            f"🎨 Mix Upgrade: {dominant_share:.0f}% sales are low-margin 'Style'. "
-            "Action: Pitch 'Calista' as a longer-lasting finish to upgrade customers."
-        )
-    elif dominant_brand == "Calista":
-        actions.append(
-            f"🎨 Premium Push: Good base in 'Calista', ~ {dominant_share:.0f}% of total revenue. "
-            "Action: Show 'One' shade cards to premium clients for top-tier projects."
-        )
-    elif dominant_brand == "One":
-        actions.append(
-            f"💎 Protect Premium: Dealer loves 'One' ({dominant_share:.0f}%). "
-            "Action: Ensure full SKU range availability so they don't switch brands."
-        )
-    else:
-        # For other sub-brands, just nudge around dominance
-        actions.append(
-            f"📦 Dealer is highly dependent on {name} (~{share:.0f}% of revenue). "
-            "Action: Use the relationship on this sub-brand to open conversations on 1-2 more sub-brands "
-        )
-    return actions
-
-def generate_nba(dealer: dict):
-    actions = []
-    
-    # --- DATA EXTRACTION ---
-    is_new = safe_get(dealer, 'is_new_dealer', 0)
-    has_no_orders = safe_get(dealer, 'has_no_orders', 0)
-    
-    dsl = int(safe_get(dealer, "days_since_last_order", 0))
-    orders_90 = int(safe_get(dealer, "total_orders_last_90d", 0))
-    
-    # Financials
-    rev_90 = safe_get(dealer, "total_revenue_last_90d", 0.0)
-    monthly_rev = rev_90 / 3.0
-    prev_90_rev = safe_get(dealer, "total_revenue_prev_90d", 0.0)
-    
-    # Trends
-    # Calculate trend manually if key missing: (Curr - Prev) / Prev
-    if prev_90_rev > 0:
-        rev_trend = ((rev_90 - prev_90_rev) / prev_90_rev) * 100
-    else:
-        rev_trend = safe_get(dealer, "pct_revenue_trend_90d", 0.0)
-
-    ticket_size_trend = safe_get(dealer, "pct_aov_trend_90d", 0.0) 
-    
-    # Peer Comparison
-    cluster_avg = safe_get(dealer, "cluster_avg_monthly_revenue_last_90d", 0.0)
-    gap_to_cluster = safe_get(dealer, "revenue_gap_vs_cluster_avg_monthly_last_90d", 0.0)
-    
-    # Specific Flags (Assuming these boolean flags exist or are derived)
-    # inactive_category = safe_get(dealer, "has_inactive_category_90d", 0) 
-    # bulk_no_repeat = safe_get(dealer, "flag_bulk_order_no_repeat", 0) 
-
-    # =====================================================
-    # SCENARIO 1: NEW DEALER (Onboarded < 30 days)
-    # =====================================================
-    if is_new == 1:
-        # Case 1.1: No Orders Yet
-        if has_no_orders == 1:
-            actions.append(
-                f"🚀 New Dealer Activation: Onboarded but zero orders yet. "
-                "Action: Pitch Hero Products (Emulsion/Primer) & 'Early Bird Scheme' (2% extra off) to start."
-            )
-            return actions # Stop here for new/empty dealers
-
-        # Case 1.2: Low Orders (Below Cluster)
-        if gap_to_cluster > 0:
-            actions.append(
-                f"📊 Bridge the Gap: Billing is {fmt_rs(abs(gap_to_cluster))} less than territory peers. "
-                "Action: Push stock of fast-moving items (Hero Products) to match peer volume."
-            )
-        
-        # Case 1.3: High Orders (Above Cluster)
-        else:
-            actions.append(
-                f"🌟 Strong Start: Billing higher than territory peers. "
-                "Action: Introduce Waterproofing Solutions to capture full wallet."
-            )
-        return actions
-
-    # =====================================================
-    # SCENARIO 2: EXISTING DEALER - RISKS & DROPS
-    # =====================================================
-    
-    # Case 2.1: Inactive (Churn Risk)
-    if dsl >= 90:
-        lost_sales = monthly_rev * 3 if monthly_rev > 0 else 45000 # fallback
-        actions.append(
-            f"🚨 Urgent Reactivation: Inactive for {dsl} days (Losing ~{fmt_rs(lost_sales)} sales). "
-            "Action: Call today. Check if stock is unsold or if a competitor took the counter."
-        )
-        return actions
-
-    # Case 2.2: Sharp Drop (Active but dropping)
-    if rev_trend < -20:
-        actions.append(
-            f"📉 Sales Drop: Billing down {abs(rev_trend):.0f}% vs last month. "
-            "Action: Visit dealer. Check if stock is lying unsold or if a competitor took share."
-        )
-
-    # Case 2.3: Bulk Order No Repeat (Specific Behavior)
-    # if bulk_no_repeat == 1:
-    #     actions.append(
-    #         "📦 Stock Check: Ordered bulk last quarter but hasn't repeated. "
-    #         "Action: Check satisfaction with that product batch and ask for re-order."
-    #     )
-
-    # Case 2.4: Shrinking Ticket Size
-    if ticket_size_trend < -10 and orders_90 >= 3:
-        actions.append(
-            "📉 Order Size Shrinking: Average order value is dropped in the last 90 days. "
-            "Action: Check if retailer demand is slowing down or if they are splitting orders."
-        )
-
-    # =====================================================
-    # SCENARIO 3: EXISTING DEALER - OPPORTUNITIES
-    # =====================================================
-
-    # Case 3.1: Inactive Category (Cross-sell recovery)
-    # if inactive_category == 1:
-    #     actions.append(
-    #         "🔄 Category Lapse: Hasn't ordered a previously purchased category in 90+ days. "
-    #         "Action: Encourage re-order of this category to capture missing sales."
-    #     )
-
-    # Case 3.2: Recovery (Bounce back)
-    if rev_trend > 20 and prev_90_rev > 0:
-         actions.append(
-            "📈 Recovery: Billing trend recovered this month! "
-            "Action: Appreciate the business and explore upsell opportunities immediately."
-        )
-
-    # Case 3.3: Underperformer (Gap vs Peers)
-    if gap_to_cluster > 5000 and rev_trend > -20: # If gap exists but not crashing
-        actions.append(
-            f"💰 Growth Opportunity: Billing {fmt_rs(abs(gap_to_cluster))} below cluster average. "
-            "Action: Identify missing SKUs compared to peers and fill the gap."
-        )
-
-    # Case 3.4: Good Performer (Momentum)
-    if rev_trend > 0 and gap_to_cluster <= 0:
-        actions.append(
-            f"🚀 High Performer: Growing {rev_trend:.0f}% and beating territory average. "
-            "Action: Introduce Waterproofing or new Premium lines to expand wallet share."
-        )
-
-    # =====================================================
-    # 4. APPEND SUB-BRAND NUDGE
-    # =====================================================
-    # Only append if we haven't already generated a "Critical" stop-action
-    # (We return early for New/Inactive, but flow through for others)
-    product_nudges = get_subbrand_nudges(dealer)
-    if product_nudges:
-        actions.extend(product_nudges)
-
-    # Fallback if list is empty
-    if not actions:
-        actions.append("🤝 Visit the dealer to identify gaps, preferences and competition.")
-
-    return actions
-
-def calculate_opportunity(dealer: dict):
-    """Calculate revenue opportunity vs cluster"""
-    has_no_orders = safe_get(dealer, 'has_no_orders', 0)
-    
-    if has_no_orders == 1:
-        cluster_rev = safe_get(dealer, 'cluster_avg_monthly_revenue_last_90d', 0)
-        if cluster_rev > 0:
-            return cluster_rev, f"{fmt_rs(cluster_rev)}/month potential based on similar dealers"
-        else:
-            return 0, "No comparable dealer data available"
-    
-    dealer_rev = safe_get(dealer, 'monthly_revenue_last_90d', 0)
-    cluster_rev = safe_get(dealer, 'cluster_avg_monthly_revenue_last_90d', 0)
-    gap = cluster_rev - dealer_rev
-
-    if gap > 0:
-        return gap, f"Potential monthly revenue increase"
-    elif gap == 0:
-        return 0, "Dealer performing at par with peers"
-    else:
-        return gap, "Dealer performing above peer average"
-
-def parse_json_relaxed(text: str):
-    if not text:
-        return None
-    try:
-        return json.loads(text)
-    except Exception:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except Exception:
-                return None
-    return None
-
-# ----------------------------
-# Local safe helpers (robust)
-# ----------------------------
-def is_nan(x) -> bool:
-    try:
-        return isinstance(x, float) and math.isnan(x)
-    except Exception:
-        return False
 
 def to_float(x, default=0.0):
     try:
@@ -793,18 +258,242 @@ def to_int(x, default=0):
         return int(float(x))
     except Exception:
         return int(default)
+    
+def safe_get(d, k, default=0):
+    if k not in d:
+        raise KeyError(
+            f"Column '{k}' not found in current row. "
+            f"Available keys (sample): {list(d.keys())[:15]}"
+        )
+    v = d.get(k, default)
+    if pd.isna(v):
+        return default
+    try:
+        return to_float(v)
+    except Exception:
+        return v
+
+def fmt_rs(x):
+    """Compact INR formatting (K/L/Cr). Keep SINGLE definition (no overrides)."""
+    try:
+        val = to_float(x)
+        if val >= 10000000:
+            return f"₹{val/10000000:.2f}Cr"
+        elif val >= 100000:
+            return f"₹{val/100000:.2f}L"
+        elif val >= 1000:
+            return f"₹{val/1000:.1f}K"
+        else:
+            return f"₹{val:.0f}"
+    except Exception:
+        return "₹0"
+
+def get_dealer_data(df, dealer_id):
+    dealer = df[df['dealer_composite_id'] == dealer_id]
+    if len(dealer) > 0:
+        return dealer.iloc[0].to_dict()
+    return None
+
+def create_revenue_benchmark_chart(dealer):
+    dealer_90d_average_monthly = safe_get(dealer, 'total_revenue_last_90d', 0) / 3.0
+    dealer_180d_average_monthly = safe_get(dealer, 'avg_monthly_revenue_180d', 0)
+    dealer_lifetime_average_monthly = safe_get(dealer, 'avg_monthly_revenue_lifetime', 0.0)
+
+    cluster_monthly = safe_get(dealer, 'cluster_avg_monthly_revenue_last_90d', 0)
+    cluster_monthly_180d = safe_get(dealer, 'cluster_avg_monthly_revenue_180d', 0)
+    cluster_monthly_lifetime = safe_get(dealer, 'cluster_avg_monthly_revenue_lifetime', 0)
+
+    terr_monthly = safe_get(dealer, 'territory_avg_monthly_revenue_last_90d', 0)
+    terr_monthly_180d = safe_get(dealer, 'territory_avg_monthly_revenue_180d', 0)
+    terr_monthly_lifetime = safe_get(dealer, 'territory_avg_monthly_revenue_lifetime', 0)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        name='This Dealer',
+        x=['3-Mo Avg', '6-Mo Avg', 'Lifetime Avg'],
+        y=[dealer_90d_average_monthly, dealer_180d_average_monthly, dealer_lifetime_average_monthly],
+        marker_color='#667eea',
+        text=[fmt_rs(dealer_90d_average_monthly), fmt_rs(dealer_180d_average_monthly), fmt_rs(dealer_lifetime_average_monthly)],
+        textposition='outside',
+        textfont_size=10
+    ))
+
+    fig.add_trace(go.Scatter(
+        name='Cluster Avg',
+        x=['3-Mo Avg', '6-Mo Avg', 'Lifetime Avg'],
+        y=[cluster_monthly, cluster_monthly_180d, cluster_monthly_lifetime],
+        mode='lines+markers',
+        line=dict(width=3, dash='dash', color='#48bb78'),
+        marker=dict(size=8, color='#48bb78')
+    ))
+
+    fig.add_trace(go.Scatter(
+        name='Territory Avg',
+        x=['3-Mo Avg', '6-Mo Avg', 'Lifetime Avg'],
+        y=[terr_monthly, terr_monthly_180d, terr_monthly_lifetime],
+        mode='lines+markers',
+        line=dict(width=3, dash='dot', color='#ed8936'),
+        marker=dict(size=8, color='#ed8936')
+    ))
+
+    fig.update_layout(
+        title='Monthly Revenue Benchmarking vs Peers',
+        height=400,
+        showlegend=True,
+        template='plotly_white',
+        yaxis_title='Avg Monthly Revenue (₹)',
+        margin=dict(t=60, b=60, l=60, r=20)
+    )
+    return fig
+
+def create_order_frequency_benchmark(dealer):
+    dealer_orders = safe_get(dealer, 'total_orders_last_90d', 0)
+    cluster_avg = safe_get(dealer, 'cluster_avg_orders_last_90d', 0)
+    terr_avg = safe_get(dealer, 'territory_avg_orders_last_90d', 0)
+    terr_p80 = safe_get(dealer, 'territory_p80_orders_last_90d', 0)
+
+    fig = go.Figure(data=[
+        go.Bar(
+            x=['This Dealer', 'Cluster Avg', 'Territory Avg', 'Territory Top 20%'],
+            y=[dealer_orders, cluster_avg, terr_avg, terr_p80],
+            marker_color=['#667eea', '#48bb78', '#48bb78', '#48bb78'],
+            text=[int(dealer_orders), f'{cluster_avg:.0f}', f'{terr_avg:.0f}', f'{terr_p80:.0f}'],
+            textposition='outside',
+            textfont_size=11
+        )
+    ])
+    fig.update_layout(
+        title='Order Frequency Comparison (Last 90 Days)',
+        height=400,
+        template='plotly_white',
+        yaxis_title='Number of Orders',
+        showlegend=False,
+        margin=dict(t=60, b=60, l=60, r=20)
+    )
+    return fig
+
+def create_subbrand_mix_chart(dealer):
+    subbrands = {
+        "Allwood":      safe_get(dealer, "share_revenue_allwood_180d", 0.0),
+        "Prime":        safe_get(dealer, "share_revenue_prime_180d", 0.0),
+        "Allwood Pro":  safe_get(dealer, "share_revenue_allwoodpro_180d", 0.0),
+        "One":          safe_get(dealer, "share_revenue_one_180d", 0.0),
+        "Calista":      safe_get(dealer, "share_revenue_calista_180d", 0.0),
+        "Style":        safe_get(dealer, "share_revenue_style_180d", 0.0),
+        "AllDry":       safe_get(dealer, "share_revenue_alldry_180d", 0.0),
+        "Artist":       safe_get(dealer, "share_revenue_artist_180d", 0.0),
+        "Sample Kit":   safe_get(dealer, "share_revenue_samplekit_180d", 0.0),
+        "Collaterals":  safe_get(dealer, "share_revenue_collaterals_180d", 0.0),
+    }
+    subbrands = {k: v for k, v in subbrands.items() if v and v > 0}
+    if not subbrands:
+        return None
+
+    fig = go.Figure(data=[go.Pie(
+        labels=list(subbrands.keys()),
+        values=list(subbrands.values()),
+        hole=0.4,
+        textinfo="label+percent",
+        textposition="inside",
+        textfont_size=11,
+    )])
+
+    fig.update_layout(
+        title="Sub-brand Revenue Mix (Last 6 Months)",
+        height=400,
+        template="plotly_white",
+        showlegend=True,
+        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02),
+        margin=dict(t=60, b=20, l=20, r=120),
+    )
+    return fig
+
+def get_dealer_stamp(dealer: dict):
+    is_new = safe_get(dealer, 'is_new_dealer', 0)
+    has_no_orders = safe_get(dealer, 'has_no_orders', 0)
+    if has_no_orders == 1:
+        return "No Orders Yet"
+    if is_new == 1:
+        return "New Dealer"
+
+    prev_90d_rev = safe_get(dealer, 'total_revenue_prev_90d', 0)
+    last_90d_rev = safe_get(dealer, 'total_revenue_last_90d', 0)
+
+    if prev_90d_rev == 0 and last_90d_rev == 0:
+        return "⚠️ No Activity"
+    if safe_get(dealer, 'dealer_is_reactivated', 0) == 1:
+        return "🔄 Reactivated"
+    if safe_get(dealer, 'dealer_is_dropping_off', 0) == 1:
+        return "⚠️ Dropping Off"
+    return None
+
+def get_dealer_badges(dealer: dict):
+    badges = []
+    if safe_get(dealer, 'dealer_is_high_freq', 0) == 1:
+        badges.append(("⚡ High Frequency", "badge-high-freq"))
+    if safe_get(dealer, 'dealer_is_low_freq', 0) == 1:
+        badges.append(("🐌 Low Frequency", "badge-low-freq"))
+    if safe_get(dealer, 'is_new_dealer', 0) == 1:
+        badges.append(("🆕 New", "badge-new"))
+    if safe_get(dealer, 'dealer_is_reactivated', 0) == 1:
+        badges.append(("🔄 Reactivated", "badge-reactivated"))
+    if safe_get(dealer, 'dealer_is_dropping_off', 0) == 1:
+        badges.append(("⚠️ Dropping Off", "badge-dropping"))
+
+    seg_op = dealer.get('dealer_segment_OP')
+    if seg_op and not pd.isna(seg_op):
+        badges.append((f"🔵 Ordering: {seg_op}", "badge"))
+    seg_bg = dealer.get('dealer_segment_BG')
+    if seg_bg and not pd.isna(seg_bg):
+        badges.append((f"🟢 Billing: {seg_bg}", "badge"))
+    return badges
+
+def get_dealer_status(dealer: dict):
+    has_no_orders = safe_get(dealer, 'has_no_orders', 0)
+    is_new = safe_get(dealer, 'is_new_dealer', 0)
+
+    if has_no_orders == 1 and is_new == 1:
+        return "attention", "🟡 NEW DEALER - NO ORDERS YET", "Dealer onboarded but hasn't placed first order"
+    if has_no_orders == 1:
+        return "risk", "🔴 NO ORDER HISTORY", "Dealer exists in system but has never ordered"
+
+    dsl = safe_get(dealer, 'days_since_last_order', 0)
+    trend = safe_get(dealer, 'pct_revenue_trend_90d', 0)
+    churn_risk = safe_get(dealer, 'order_churn_risk_score', 0)
+
+    if dsl > 90:
+        return "risk", "🚨 INACTIVE", f"No order in {dsl} days - dealer may be lost"
+    elif dsl > 45:
+        return "risk", "🔴 AT RISK", f"No order in {dsl} days - urgent follow-up needed"
+
+    if churn_risk > 1.5:
+        return "risk", "🔴 HIGH CHURN RISK", f"Risk score {churn_risk:.1f} - immediate action required"
+
+    if trend < -10:
+        return "attention", "🟡 DECLINING", f"Sales down {abs(trend):.0f}% - needs attention"
+
+    if trend > 10 and dsl < 30:
+        return "healthy", "🟢 GROWING", f"Sales up {trend:.0f}% - capitalize on momentum"
+
+    if dsl < 30:
+        return "healthy", "🟢 STABLE", "Regular ordering pattern - maintain engagement"
+    else:
+        return "attention", "🟡 NEEDS FOLLOW-UP", f"Last order {dsl} days ago - schedule visit"
+
+# ----------------------------
+# Local safe helpers (robust)
+# ----------------------------
+def is_nan(x) -> bool:
+    try:
+        return isinstance(x, float) and math.isnan(x)
+    except Exception:
+        return False
 
 def flag_text(x):
     return "Yes" if x == 1 else "No"
 
-def fmt_rs(x):
-        return f"₹{to_float(x, 0.0):,.0f}"
-
 def ensure_list(x):
-    """
-    Accept list/dict/None/NaN/JSON-string/Python-repr-string and return a list[dict].
-    This is the critical fix for your llm_* columns.
-    """
     if x is None or is_nan(x):
         return []
     if isinstance(x, list):
@@ -813,11 +502,8 @@ def ensure_list(x):
         return [x]
     if isinstance(x, str):
         s = x.strip()
-        if not s:
+        if not s or s.lower() in {"none", "null", "nan"}:
             return []
-        if s.lower() in {"none", "null", "nan"}:
-            return []
-        # Try JSON (rarely works if string is valid JSON)
         try:
             parsed = json.loads(s)
             if isinstance(parsed, list):
@@ -826,7 +512,6 @@ def ensure_list(x):
                 return [parsed]
         except Exception:
             pass
-        # Fallback: Python literal repr (your common case)
         try:
             parsed = literal_eval(s)
             if isinstance(parsed, list):
@@ -836,40 +521,412 @@ def ensure_list(x):
         except Exception:
             return []
     return []
-    
-def get_context(dealer: dict) -> str:
-    """
-    Generalised LLM prompt for TSM nudges with realistic MONTHLY impact.
-    - Forces the model to diagnose -> pick objective -> craft invoice-level actions -> estimate impact.
-    - Keeps language simple and actionable for TSMs.
-    - Prevents "dead" ₹1k nudges by requiring material, plausible uplift.
-    """
+
+def parse_json_relaxed(text: str):
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except Exception:
+                return None
+    return None
+
+def calculate_opportunity(dealer: dict):
+    has_no_orders = safe_get(dealer, 'has_no_orders', 0)
+    if has_no_orders == 1:
+        cluster_rev = safe_get(dealer, 'cluster_avg_monthly_revenue_last_90d', 0)
+        if cluster_rev > 0:
+            return cluster_rev, f"{fmt_rs(cluster_rev)}/month potential based on similar dealers"
+        else:
+            return 0, "No comparable dealer data available"
+
+    dealer_rev = safe_get(dealer, 'monthly_revenue_last_90d', 0)
+    cluster_rev = safe_get(dealer, 'cluster_avg_monthly_revenue_last_90d', 0)
+    gap = cluster_rev - dealer_rev
+
+    if gap > 0:
+        return gap, "Potential monthly revenue increase"
+    elif gap == 0:
+        return 0, "Dealer performing at par with peers"
+    else:
+        return gap, "Dealer performing above peer average"
+
+# -----------------------------
+# RULE: Sub-brand nudges (pre-tagged) — add gating
+# -----------------------------
+def get_subbrand_nudges(dealer: dict, enabled: bool = True):
+    if not enabled:
+        return []
+
+    # Only do mix nudges when dealer has meaningful volume
+    total_rev_180d = to_float(safe_get(dealer, "total_revenue_180d", 0.0), 0.0)
+    if total_rev_180d < 100000:  # ~₹1L in 180d → too small, dominance is noisy
+        return []
+
+    actions = []
+    subbrand_shares = {
+        "Allwood":      to_float(safe_get(dealer, "share_revenue_allwood_180d", 0.0), 0.0),
+        "Prime":        to_float(safe_get(dealer, "share_revenue_prime_180d", 0.0), 0.0),
+        "Allwood Pro":  to_float(safe_get(dealer, "share_revenue_allwoodpro_180d", 0.0), 0.0),
+        "One":          to_float(safe_get(dealer, "share_revenue_one_180d", 0.0), 0.0),
+        "Calista":      to_float(safe_get(dealer, "share_revenue_calista_180d", 0.0), 0.0),
+        "Style":        to_float(safe_get(dealer, "share_revenue_style_180d", 0.0), 0.0),
+        "AllDry":       to_float(safe_get(dealer, "share_revenue_alldry_180d", 0.0), 0.0),
+        "Artist":       to_float(safe_get(dealer, "share_revenue_artist_180d", 0.0), 0.0),
+        "Sample Kit":   to_float(safe_get(dealer, "share_revenue_samplekit_180d", 0.0), 0.0),
+        "Collaterals":  to_float(safe_get(dealer, "share_revenue_collaterals_180d", 0.0), 0.0),
+    }
+
+    dominant_brand, dominant_share = max(subbrand_shares.items(), key=lambda kv: kv[1])
+    if dominant_share <= 0.5:
+        return actions
+
+    dominant_pct = dominant_share * 100
+
+    if dominant_brand == "Style":
+        actions.append({
+            "key": "SUBBRAND_DOMINANT_STYLE",
+            "priority": 30,
+            "text": (
+                f"🎨 Mix Upgrade: {dominant_pct:.0f}% sales are 'Style'. "
+                "Action: Pitch 'Calista' as a longer-lasting finish for upgrade buyers."
+            ),
+            "tag": "SUBBRAND_DOMINANT_STYLE"
+        })
+    elif dominant_brand == "Calista":
+        actions.append({
+            "key": "SUBBRAND_DOMINANT_CALISTA",
+            "priority": 30,
+            "text": (
+                f"🎨 Premium Push: 'Calista' is ~{dominant_pct:.0f}% of revenue. "
+                "Action: Show 'One' shade cards to premium clients for top-tier projects."
+            ),
+            "tag": "SUBBRAND_DOMINANT_CALISTA"
+        })
+    elif dominant_brand == "One":
+        actions.append({
+            "key": "SUBBRAND_DOMINANT_ONE",
+            "priority": 30,
+            "text": (
+                f"💎 Protect Premium: 'One' is {dominant_pct:.0f}% of sales. "
+                "Action: Ensure full SKU range availability so they don’t switch brands."
+            ),
+            "tag": "SUBBRAND_DOMINANT_ONE"
+        })
+    else:
+        actions.append({
+            "key": "SUBBRAND_DOMINANT_OTHER",
+            "priority": 25,
+            "text": (
+                f"📦 Mix Risk: ~{dominant_pct:.0f}% revenue depends on {dominant_brand}. "
+                "Action: Use this strength to open 1–2 more sub-brands (reduce dependency)."
+            ),
+            "tag": "SUBBRAND_DOMINANT_OTHER"
+        })
+
+    return actions
+
+# -----------------------------
+# RULE: Main rule nudges — robust + ranked + deduped
+# -----------------------------
+def _impact_range(v: float) -> str:
+    v = to_float(v or 0)
+    lo, hi = 0.8 * v, 1.2 * v
+    return f"~₹{lo:,.0f}-₹{hi:,.0f}"
+
+def _estimate_rule_impact(dealer: dict, tag: str) -> str:
+    # Prefer typical invoice size, else fallback
+    tiv = to_float(dealer.get("avg_invoice_value_90d") or dealer.get("typical_invoice_size") or 0)
+    monthly_rev = to_float(dealer.get("total_revenue_last_90d") or 0) / 3.0
+    gap_to_cluster = to_float(dealer.get("revenue_gap_vs_cluster_avg_monthly_last_90d") or 0)
+
+    # Dormant / churn: “secure the first restart order”
+    if tag in {"CHURN_RISK_INACTIVE_90D", "CHURN_RISK_HIGH_SCORE", "NEW_DEALER_NO_ORDERS"}:
+        basis = tiv if tiv > 0 else max(5000, 0.2 * monthly_rev)  # conservative
+        return f"{_impact_range(basis)} this month (basis: first reactivation order)"
+
+    # Gap growth: recover part of gap
+    if tag in {"GROWTH_OPPORTUNITY_BELOW_CLUSTER", "GROWTH_GAP_TO_CLUSTER"} and gap_to_cluster > 0:
+        basis = min(gap_to_cluster, monthly_rev * 0.3 if monthly_rev > 0 else gap_to_cluster)
+        return f"{_impact_range(basis)} this month (basis: partial gap recovery)"
+
+    # Default: small conservative add-on
+    basis = tiv if tiv > 0 else 8000
+    return f"{_impact_range(basis)} this month (basis: conservative add-on)"
+
+def _why_from_tag(dealer: dict, tag: str) -> str:
+    dsl = to_int(dealer.get("days_since_last_order") or 0)
+    churn = to_float(dealer.get("order_churn_risk_score") or 0)
+    trend = to_float(dealer.get("pct_revenue_trend_90d") or 0)
+
+    if tag == "CHURN_RISK_INACTIVE_90D":
+        return f"Dealer inactive for {dsl} days; high risk of churn."
+    if tag == "CHURN_RISK_HIGH_SCORE":
+        return f"High churn risk score ({churn:.2f}); needs immediate follow-up."
+    if tag == "SALES_DROP_SHARP":
+        return f"Revenue trend is down {abs(trend):.0f}% (90d); needs correction."
+    if tag == "PRODUCT_VARIETY_LOW":
+        return "Limited product variety vs peers; expanding range can lift invoice value."
+    return "Rule trigger matched based on dealer’s recent performance signals."
+
+def generate_rule_nudges(dealer: dict, max_actions: int = 2):
+    raw_actions = []
+
+    def add_action(text: str, priority: int, key: str, tag: str = None):
+        raw_actions.append({
+            "text": text,
+            "priority": priority,
+            "key": key,
+            "tag": tag
+        })
+
+    # --- Robust flags / conversions ---
+    is_new_flag = to_int(safe_get(dealer, "is_new_dealer", 0), 0)
+    has_no_orders_flag = to_int(safe_get(dealer, "has_no_orders", 0), 0)
+
+    total_orders_lifetime = to_int(safe_get(dealer, "total_orders_lifetime", 0), 0)
+    tenure_months = to_int(safe_get(dealer, "tenure_months", 9999), 9999)
+
+    # Treat as "activation" if no lifetime orders (even if is_new flag is wrong/missing)
+    has_no_orders = (has_no_orders_flag == 1) or (total_orders_lifetime == 0)
+    is_new = (is_new_flag == 1) or (tenure_months <= 1)
+
+    dsl = to_int(safe_get(dealer, "days_since_last_order", 0), 0)
+    orders_90 = to_int(safe_get(dealer, "total_orders_last_90d", 0), 0)
+    prev_orders_90 = to_int(safe_get(dealer, "total_orders_prev_90d", 0), 0)
+
+    churn_risk = to_float(safe_get(dealer, "order_churn_risk_score", 0.0), 0.0)
+    dropping_off = to_int(safe_get(dealer, "dealer_is_dropping_off", 0), 0)
+
+    # Revenue trends: use 30d for "last month"
+    rev_30 = to_float(safe_get(dealer, "total_revenue_last_30d", 0.0), 0.0)
+    prev_30 = to_float(safe_get(dealer, "total_revenue_prev_30d", 0.0), 0.0)
+    if prev_30 > 0:
+        rev_trend_30 = ((rev_30 - prev_30) / prev_30) * 100
+    else:
+        rev_trend_30 = to_float(safe_get(dealer, "pct_revenue_trend_30d", 0.0), 0.0)
+
+    rev_90 = to_float(safe_get(dealer, "total_revenue_last_90d", 0.0), 0.0)
+    prev_90_rev = to_float(safe_get(dealer, "total_revenue_prev_90d", 0.0), 0.0)
+    if prev_90_rev > 0:
+        rev_trend_90 = ((rev_90 - prev_90_rev) / prev_90_rev) * 100
+    else:
+        rev_trend_90 = to_float(safe_get(dealer, "pct_revenue_trend_90d", 0.0), 0.0)
+
+    ticket_size_trend = to_float(safe_get(dealer, "pct_aov_trend_90d", 0.0), 0.0)
+    gap_to_cluster = to_float(safe_get(dealer, "revenue_gap_vs_cluster_avg_monthly_last_90d", 0.0), 0.0)  # +ve = below peers
+
+    # Better baselines for inactive / opportunity
+    avg_monthly_180d = to_float(safe_get(dealer, "avg_monthly_revenue_180d", 0.0), 0.0)
+    terr_avg_monthly = to_float(safe_get(dealer, "territory_avg_monthly_revenue_last_90d", 0.0), 0.0)
+    cluster_avg_monthly = to_float(safe_get(dealer, "cluster_avg_monthly_revenue_last_90d", 0.0), 0.0)
+
+    baseline_monthly = max(
+        (rev_90 / 3.0) if rev_90 > 0 else 0.0,
+        (prev_90_rev / 3.0) if prev_90_rev > 0 else 0.0,
+        avg_monthly_180d,
+        terr_avg_monthly,
+        cluster_avg_monthly,
+        45000.0  # last fallback
+    )
 
     # -----------------------------
-    # Scenario / flags
+    # SCENARIO 1: ACTIVATION (no orders)
     # -----------------------------
+    if has_no_orders:
+        potential = max(cluster_avg_monthly, terr_avg_monthly, 0.0)
+        pot_txt = fmt_rs(potential) if potential > 0 else "₹0"
+        add_action(
+            text=(
+                "🚀 Activation (First Order): Dealer has no orders yet. "
+                f"Action: Start with Hero Products + a small starter basket; aim for 1st invoice this week (potential ~{pot_txt}/month vs peers)."
+            ),
+            priority=100,
+            key="ACTIVATION_NO_ORDERS",
+            tag=None
+        )
+    else:
+        # -----------------------------
+        # SCENARIO 2: INACTIVE
+        # -----------------------------
+        if dsl >= 90:
+            # Estimate loss proportional to inactivity window (cap at 3 months for message)
+            months_lost = min(3, max(1, math.ceil(dsl / 30)))
+            lost_sales = baseline_monthly * months_lost
+            add_action(
+                text=(
+                    f"🚨 Urgent Reactivation: Inactive for {dsl} days (at risk ~{fmt_rs(lost_sales)}). "
+                    "Action: Call/visit today, confirm reason (stock stuck vs competitor), and lock next order date."
+                ),
+                priority=95 + (5 if churn_risk >= 4 or dropping_off == 1 else 0),
+                key="INACTIVE_90D",
+                tag=None
+            )
+        else:
+            # -----------------------------
+            # SCENARIO 3: DECLINE / RISK
+            # -----------------------------
+            if rev_trend_30 <= -20:
+                add_action(
+                    text=(
+                        f"📉 Sales Drop (30d): Billing down {abs(rev_trend_30):.0f}% vs last month. "
+                        "Action: Visit + check competitor share, pending claims, and push one immediate replenishment order."
+                    ),
+                    priority=85 + (5 if churn_risk >= 4 or dropping_off == 1 else 0),
+                    key="SALES_DROP_30D",
+                    tag=None
+                )
+
+            # AOV drop only if orders are NOT rising sharply (avoid false alarms like “many small orders now”)
+            if ticket_size_trend < -10 and orders_90 >= 3:
+                orders_growth = ((orders_90 - prev_orders_90) / prev_orders_90 * 100) if prev_orders_90 > 0 else 0.0
+                if orders_growth < 25:
+                    add_action(
+                        text=(
+                            "📉 Order Size Shrinking: Average invoice value is down in the last 90 days. "
+                            "Action: Check if they’re splitting orders; push bundle deals to lift ticket size."
+                        ),
+                        priority=65,
+                        key="AOV_SHRINKING",
+                        tag=None
+                    )
+
+            # -----------------------------
+            # SCENARIO 4: GAP / GROWTH
+            # -----------------------------
+            if gap_to_cluster > 5000 and rev_trend_30 > -20:
+                add_action(
+                    text=(
+                        f"💰 Growth Gap: Billing is {fmt_rs(abs(gap_to_cluster))} below peer average. "
+                        "Action: Compare with peer basket (missing SKUs/sub-brands) and close the gap this month."
+                    ),
+                    priority=60,
+                    key="GAP_TO_CLUSTER",
+                    tag=None
+                )
+
+            # -----------------------------
+            # SCENARIO 5: HIGH PERFORMER (dedupe “Recovery” vs “High performer”)
+            # -----------------------------
+            if rev_trend_90 > 20 and gap_to_cluster <= 0:
+                add_action(
+                    text=(
+                        f"🚀 High Performer: Up {rev_trend_90:.0f}% vs previous 90 days and above peers. "
+                        "Action: Appreciate + push 1 new premium line / waterproofing to expand wallet share."
+                    ),
+                    priority=55,
+                    key="HIGH_PERFORMER",
+                    tag=None
+                )
+            elif rev_trend_90 > 20 and gap_to_cluster > 0:
+                add_action(
+                    text=(
+                        "📈 Recovery: Trend is up, but still below peers. "
+                        "Action: Lock repeat SKUs + add 1 fast-moving add-on to sustain the recovery."
+                    ),
+                    priority=50,
+                    key="RECOVERY_BELOW_PEERS",
+                    tag=None
+                )
+
+    # Sub-brand nudges: only when NOT in activation/inactive/decline mode
+    enable_subbrand = (
+        (not has_no_orders) and (dsl < 60) and (rev_trend_30 > -15)
+    )
+    raw_actions.extend(get_subbrand_nudges(dealer, enabled=enable_subbrand))
+
+    if not raw_actions:
+        add_action(
+            text="🤝 Visit the dealer to identify gaps, preferences and competition.",
+            priority=10,
+            key="GENERIC_VISIT",
+            tag="CROSS_SELL_CATEGORY"
+        )
+
+    # --- Rank + dedupe + cap ---
+    raw_actions = sorted(raw_actions, key=lambda x: x.get("priority", 0), reverse=True)
+    seen = set()
+    final_raw = []
+    for a in raw_actions:
+        k = a.get("key") or a.get("tag") or a.get("text")
+        if k in seen:
+            continue
+        seen.add(k)
+        final_raw.append(a)
+        if len(final_raw) >= max_actions:
+            break
+
+    # --- Tagging (your existing pipeline) ---
+    tagged_actions = []
+    for item in final_raw:
+        action_text = item.get("text", "")
+        tag = item.get("tag")
+
+        if not tag or tag not in TAG_SCHEMA:
+            rule_tag, rule_conf = assign_rule_tag_v2(action_text, dealer)  # use v2 to get confidence
+            tag = rule_tag  # ensures tag exists in schema
+
+            do = action_text  # simplest: keep as-is; or split on "Action:" if you want
+            why = _why_from_tag(dealer, tag)
+            impact = _estimate_rule_impact(dealer, tag)
+
+            tagged_actions.append({
+                "text": do,          # keep text == do (same as LLM normalization)
+                "do": do,
+                "why": why,
+                "impact": impact,
+
+                "tag": tag,
+                "tag_family": get_tag_family(tag),
+                "priority_base": TAG_SCHEMA[tag]["priority_base"],
+                "strength_score": get_strength_for_tag(tag),
+
+                # Fill the LLM columns for rule nudges so CSV never has blanks
+                "llm_primary_tag": tag,
+                "llm_tag_confidence": to_float(rule_conf),
+                "llm_tag_basis": f"rule_engine; tag={tag}",
+            })
+
+    return tagged_actions
+
+
+# -----------------------------
+# LLM Prompt + LLM Nudges (PER-ACTION TAG)
+# -----------------------------
+ALLOWED_LLM_PRIMARY_TAGS = {
+    "LLM_REPURCHASE_DUE",
+    "LLM_INACTIVE_CATEGORY",
+    "LLM_CROSS_SELL",
+    "LLM_TERRITORY_HERO",
+    "LLM_GENERAL",
+}
+
+def get_context(dealer: dict) -> str:
     is_new = to_int(safe_get(dealer, "is_new_dealer", 0), 0)
     has_no_orders = to_int(safe_get(dealer, "has_no_orders", 0), 0)
     days_since_last_order = to_int(safe_get(dealer, "days_since_last_order", 9999), 9999)
     days_until_expected_order = to_int(safe_get(dealer, "days_until_expected_order", 9999), 9999)
     trend_90d = to_float(safe_get(dealer, "pct_revenue_trend_90d", 0.0), 0.0)
+    # Expose trend 30d (if available)
+    trend_30d = to_float(safe_get(dealer, "pct_revenue_trend_30d", 0.0), 0.0) 
     dropping_off = to_int(safe_get(dealer, "dealer_is_dropping_off", 0), 0)
     churn_risk = to_float(safe_get(dealer, "order_churn_risk_score", 0.0), 0.0)
 
-    # -----------------------------
-    # Product candidates
-    # -----------------------------
     dealer_top = ensure_list(dealer.get("llm_dealer_top_products_90d"))
     terr_hero = ensure_list(dealer.get("llm_territory_top_products_90d"))
     cross_sell = ensure_list(dealer.get("llm_territory_products_in_dealer_categories"))
     repurchase = ensure_list(dealer.get("llm_repurchase_recommendations"))
     inactive_cats = ensure_list(dealer.get("llm_inactive_categories_90d"))
 
-    # -----------------------------
-    # Monthly anchors
-    # -----------------------------
     total_rev_90d = to_float(safe_get(dealer, "total_revenue_last_90d", 0.0), 0.0)
     total_orders_90d = to_int(safe_get(dealer, "total_orders_last_90d", 0), 0)
+    # Expose Zero Activity Flag
+    flag_zero_activity_90d = to_int(safe_get(dealer, "flag_zero_activity_90d", 0), 0)
 
     baseline_monthly_sales = (total_rev_90d / 3.0) if total_rev_90d > 0 else 0.0
     baseline_orders_per_month = (total_orders_90d / 3.0) if total_orders_90d > 0 else 0.0
@@ -882,9 +939,6 @@ def get_context(dealer: dict) -> str:
     cluster_avg_monthly = to_float(safe_get(dealer, "cluster_avg_monthly_revenue_last_90d", 0.0), 0.0)
     territory_avg_monthly = to_float(safe_get(dealer, "territory_avg_monthly_revenue_last_90d", 0.0), 0.0)
 
-    # -----------------------------
-    # Context header
-    # -----------------------------
     dealer_type = "NEW DEALER (Last 30 days)" if is_new == 1 else "EXISTING DEALER"
     order_status = "NO ORDERS YET" if has_no_orders == 1 else f"{total_orders_90d} orders in 90d"
 
@@ -905,7 +959,10 @@ BASELINE (MONTHLY)
 - Typical invoice size: {fmt_rs(typical_invoice)}
 - Days since last order: {days_since_last_order if has_no_orders == 0 else "N/A"}
 - Expected next order in: {days_until_expected_order} days
+- Orders in last 90d: {total_orders_90d}
+- Zero activity flag (90d): {flag_text(flag_zero_activity_90d)}
 - Revenue trend (90d): {trend_90d:.0f}%
+- Revenue trend (30d): {trend_30d:.0f}%
 
 BENCHMARKS (context only)
 - Cluster avg monthly: {fmt_rs(cluster_avg_monthly)}
@@ -916,141 +973,204 @@ RISK
 - Dropping off: {flag_text(dropping_off)}
 """
 
-    # -----------------------------
-    # Candidate listing (simple)
-    # -----------------------------
-    def list_products(products):
+    def format_candidates(items, kind: str) -> str:
         lines = []
-        for p in products[:5]:
-            base = p.get("base_product") or "N/A"
-            cat = p.get("category") or ""
-            lines.append(f"- {base} ({cat})")
+        for p in (items or [])[:3]:  # was [:5] → save tokens
+            name = p.get("product") or p.get("base_product") or "N/A"
+            brand = p.get("brand") or p.get("sub_brand") or "General"
+            cat = p.get("category", "")
+            sub = p.get("sub_category", "")
+
+            if kind == "repurchase":
+                lines.append(
+                    f"- {name}|{brand}|{cat}/{sub}|{p.get('action','')} {p.get('urgency_level','')}|"
+                    f"dsl={p.get('days_since_last_purchase','?')}|cycle={p.get('typical_cycle_days','?')}|"
+                    f"aov={p.get('typical_order_value','?')}|rc={p.get('reason_code','')}"
+                )
+
+            elif kind == "terr":
+                lines.append(
+                    f"- {name}|{brand}|{cat}/{sub}|{p.get('recommendation_type','')}|"
+                    f"lift={p.get('estimated_revenue_lift','?')}|bench={p.get('benchmark_monthly_sales','?')}|"
+                    f"peers={p.get('percent_peers_stocking','?')}%|rc={p.get('reason_code','')}"
+                )
+
+            elif kind == "cross":
+                lines.append(
+                    f"- {name}|{brand}|{cat}/{sub}|bench={p.get('benchmark_monthly_sales','?')}|"
+                    f"peers={p.get('percent_peers_stocking','?')}%|rc={p.get('reason_code','')}"
+                )
+
+            elif kind == "inactive":
+                lines.append(
+                    f"- {cat}/{sub}|dsl={p.get('days_since_last_purchase','?')}|"
+                    f"past_mo={p.get('dealer_past_monthly_sales','?')}|peer_mo={p.get('peer_typical_monthly_sales','?')}|"
+                    f"rc={p.get('reason_code','')}"
+                )
+
+            else:  # dealer_top
+                lines.append(
+                    f"- {name}|{brand}|{cat}/{sub}|mo={p.get('avg_monthly_sales','?')}|"
+                    f"share={p.get('revenue_share_pct','?')}%|rc={p.get('reason_code','')}"
+                )
+
         return "\n".join(lines) if lines else "None"
+
 
     product_block = f"""
 PRODUCT CANDIDATES (use names exactly; do NOT invent products)
 
 REPURCHASE (existing, due/overdue):
-{list_products(repurchase)}
+{format_candidates(repurchase, "repurchase")}
 
 CROSS-SELL (new, inside dealer's strong categories):
-{list_products(cross_sell)}
+{format_candidates(cross_sell, "cross")}
 
-INACTIVE CATEGORY (reactivation):
-{list_products(inactive_cats)}
+INACTIVE CATEGORY (reactivation) (NOTE: may be category-only, no product name):
+{format_candidates(inactive_cats, "inactive")}
 
-TERRITORY HERO (for activation / expansion):
-{list_products(terr_hero)}
+TERRITORY HERO (activation / expansion / defend share):
+{format_candidates(terr_hero, "terr")}
 
 CORE PRODUCTS (dealer already buys a lot):
-{list_products(dealer_top)}
+{format_candidates(dealer_top, "dealer_top")}
 """
 
-    # -----------------------------
-    # Generalised instruction contract
-    # -----------------------------
-    instructions = """
-You are writing for a Territory Sales Manager (TSM).
-Your output must be SIMPLE, DIRECT, SPOKEN language.
-No long explanations. No jargon. No fluff.
+    instructions = f"""
+You are writing for a Territory Sales Manager (TSM). Tone: simple, spoken, direct.
 
-### HARD RULES (must follow)
-1) Use ONLY product names from PRODUCT CANDIDATES above. Do NOT invent products.
-2) Give 2-3 actions maximum.
-3) Output ONLY valid JSON. No extra text.
-4) Each action must be invoice-ready: what to say/do in 1 call/visit.
+Return ONLY valid JSON matching the schema below. (no extra text)
 
-### YOUR JOB (do this internally before writing)
-Step 1 — Diagnose this dealer in 1 line (internally)
-- Are they: activation / retention-risk / declining basket / growing expansion / range-gap?
-Use ALL signals: trend, churn risk, order timing, invoice size, baseline orders/month.
+TASK
+Pick 2-3 actions (highest priority first). **Exception: If Dormant override triggers, return exactly 1 action.**
 
-Step 2 — Choose ONE primary objective for THIS MONTH (internally)
-Pick only one:
-- SECURE: prevent drop / keep order rhythm
-- EXPAND: add more items into next invoice (basket expansion)
-- RECOVER: restart an inactive category
-- ACTIVATE: first order / early repeat order
+TAG RULES (STRICT)
+- Each action MUST have exactly ONE primary_tag from:
+  LLM_REPURCHASE_DUE, LLM_INACTIVE_CATEGORY, LLM_CROSS_SELL, LLM_TERRITORY_HERO, LLM_GENERAL
+- MAX 1 action per primary_tag (no duplicates).
+- CRITICAL BUNDLING: If you select LLM_REPURCHASE_DUE, group all available items (e.g., SEALER BASE + HARDENER) into a single, high-impact action. Bundle up to 2-3 related items for other tags.
+- Prefer using at least 2 different tags when multiple buckets have good candidates (unless dealer is clearly retention-risk).
+- NO OVERLAP RULE (CRITICAL):
+  - Do not repeat the same category/sub-category theme across actions.
+  - If you use the LLM_REPURCHASE_DUE tag for a product, you CANNOT also use the LLM_INACTIVE_CATEGORY tag for that product's category/sub-category (and vice versa). Choose the framing that yields the highest impact.
+  - **CRITICAL NO OVERLAP REFINEMENT:** If you select **LLM\_INACTIVE\_CATEGORY**, you **MUST NOT** reference any specific product that is also flagged for **DUE\_FOR\_WINBACK** or **DUE\_FOR\_REORDER** in the `PRODUCT CANDIDATES` list within the action's `do` or `why` fields. Focus only on the category theme.
 
-Step 3 — Build actions around the NEXT INVOICE (internal logic)
-If next order is expected within 7 days, assume actions are bundled into the SAME invoice.
-Use basket-thinking:
-- 1 action can include 2-3 products that naturally go together.
-Avoid repeating actions that are basically the same “add another SKU”.
+DORMANT / ZERO-ACTIVITY OVERRIDE (STRICT)
+- **Check based on Summary Block fields:** If Orders in last 90d = 0 OR Days since last order >= 120 OR Zero activity flag (90d) is YES:
+  - Return **EXACTLY ONE** action only.
+  - primary_tag **MUST** be **LLM\_GENERAL**.
+  - That ONE action must include a “starter basket” (2–3 items) pulled from TERRITORY HERO and/or REPURCHASE candidates (if any).
+  - Do **NOT** output **LLM\_INACTIVE\_CATEGORY / LLM\_TERRITORY\_HERO / LLM\_CROSS\_SELL** as separate actions for dormant dealers.
 
-Step 4 — IMPACT (most important)
-Impact = REALISTIC influenced business value THIS MONTH (next 30 days).
-It can include:
-- Secured revenue (ensuring SKU is included)
-- Accelerated revenue (pulled into this month)
-- Expanded basket value (extra line items)
-Not only strict causal uplift.
+CANDIDATE FIDELITY
+- Use ONLY product/category names from PRODUCT CANDIDATES. Never invent names.
+- Don't recompute metrics (don't recalc % or lift). Use fields as given.
 
-Use baseline anchors:
-- Sales/month
-- Orders/month
-- Typical invoice size
+PRIORITY (HIGH-IMPACT ORDER)
+1. **CRITICAL SECURITY (OVERRIDE):** If the dealer is DECLINING or CHURN RISK is high, you MUST prioritize **HIGH-URGENCY REPURCHASE** or a **DEFEND SHARE** action as Action 1.
+1a. **DEFEND CORE REVENUE (REQUIRED ACTION 1 or 2):** For declining or high-churn dealers, Action 1 or 2 **MUST** be a **DEFEND SHARE** action (Securing *LLM\_DEALER\_TOP\_PRODUCTS* or *LLM\_TERRITORY\_HERO* with lift = 0). Frame this using **LLM\_TERRITORY\_HERO** or **LLM\_GENERAL**.
+2. **SECURE/RECOVER:** If REPURCHASE has WINBACK/HIGH/overdue, or INACTIVE CATEGORY has a high peer gap, prioritize these (highest impact first).
+3. **DECLINING / HIGH-RISK GUARDRAIL:** If Revenue trend (30d) <= -20% OR Churn risk > 1.0 OR Dropping off is YES: Do **NOT** use **LLM\_CROSS\_SELL** unless no repurchase/defend candidates exist.
+4. **ACTIVATE/EXPAND:** For others, use CROSS-SELL / TERRITORY HERO for expansion only after "secure/recover" is covered.
+5. New/no-orders: focus ACTIVATE first (hero starter basket).
 
-How to estimate (internal):
-A) Repurchase: anchor on product typical invoice if available; otherwise typical invoice size.
-B) Cross-sell: assume trial add-on inside an existing invoice.
-C) Reactivation: partial recovery of past run-rate (not full comeback).
-D) Territory hero: starter add-on or expansion item, sized to the dealer.
+DEFEND / ZERO-LIFT
+- If recommendation_type implies DEFEND/MAINTAIN OR lift = 0:
+  action must be “secure/defend” (availability, scheme, shelf share, ensure next invoice),
+  and impact must be **“secured revenue”**, NOT incremental uplift.
 
-Sanity checks (internal):
-- Do NOT output tiny impacts that won't motivate a TSM, unless the dealer is extremely small.
-- For existing dealers, total combined uplift across all actions should usually stay within ~5-15% of baseline monthly sales.
-- If churn risk is high or trend is negative, at least one action should feel like "secure the next invoice".
+NO UNSUPPORTED CLAIMS
+Don't say “booming/growing/weak” unless you reference a signal (trend/churn/urgency/baseline). Avoid exaggerated claims (e.g., 'strong hero' for low peer adoption).
 
-### OUTPUT FORMAT (strict JSON)
-{
+IMPACT (realistic, next 30d)
+- Repurchase: use typical_order_value (sum of bundled items) as basis.
+- Inactive category: partial recovery only; cap at <= past\_mo and usually <= 50% of peer\_mo.
+- Cross/territory hero new product: trial add-on; keep conservative.
+- **IMPACT FORMAT STRICT:** impact must **ALWAYS** be a range "~₹X-₹Y". If you only have one calculated value V, output "~₹(0.8V)-₹(1.2V)".
+- **IMPACT FOR GENERAL/DROPPED OFF (CRITICAL):** Must provide a **numeric range** (~₹X-₹Y) based on the dealer's **Typical Invoice Size** or their **Baseline Monthly Sales** to represent the revenue secured from the first re-activation order.
+- **DEFEND\_SHARE IMPACT RULE (NO GUESSING):** If recommendation\_type is DEFEND\_SHARE or lift = 0: impact MUST be "~₹X-₹Y" and computed from **ONE** provided field only: **benchmark\_monthly\_sales** OR **avg\_monthly\_sales** (from CORE PRODUCTS) OR **typical\_invoice**. tag\_basis MUST include the exact field used (e.g., "bench=10230" or "dealer\_top\_mo=80000").
+
+STYLE (TSM SCRIPT FORMAT MANDATORY)
+- "do" must contain:
+  1) a specific call/visit timing (today/this week),
+  2) one diagnostic question (stock stuck? competitor? project pipeline?),
+  3) one clear close (book invoice / order ₹X / 2 SKUs).
+- Avoid vague verbs: "discuss", "highlight", "explore" unless paired with a specific close.
+- "why" max 2 sentences; must cite 1-2 facts (days since last order/cycle/urgency/lift/rc - in simple terms).
+- tag_confidence 0.60-0.95; tag_basis should include rc=...
+
+OUTPUT JSON (STRICT)
+{{
   "actions": [
-    {
-      "do": "Exact words/steps the TSM should say/do. Mention product names.",
-      "why": "Simple business reason (1 line).",
-      "impact": "~₹X-₹Y this month (basis in 3-6 words)"
-    }
+    {{
+      "do": "TSM-ready instruction (max 2 sentences).",
+      "why": "One-line reason tied ONLY to the chosen tag and signals.",
+      "impact": "~₹X-₹Y this month (basis 3-6 words)",
+      "primary_tag": "LLM_...",
+      "tag_confidence": 0.60,
+      "tag_basis": "short basis (include reason_code if present)"
+    }}
   ]
-}
+}}
 """
-
     return summary_block + "\n" + product_block + "\n" + instructions
 
-def generate_simple_ai_insights(dealer: dict):
-    """Simplified AI prompt with new dealer logic"""
-    
+def generate_ai_nudges(dealer: dict, model=None):
     context = get_context(dealer)
-    # st.write("AI Context:", context)
-    # print("AI Context:", context)
-    
+
     try:
-        model = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
-            temperature=0.1,
-        )
-        
+        if model is None:
+            model = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                google_api_key=os.getenv("GOOGLE_API_KEY"),
+                temperature=0.1,
+            )
+
         response = model.invoke(context)
-        response_text = response.content if hasattr(response, 'content') else str(response)
+        response_text = response.content if hasattr(response, "content") else str(response)
         insights = parse_json_relaxed(response_text)
-        
-        if insights and 'actions' in insights:
-            return insights['actions'][:3]
+
+        if isinstance(insights, dict) and isinstance(insights.get("actions"), list):
+            actions = insights.get("actions", [])[:2]
         else:
-            return fallback_actions(dealer)
-            
+            actions = fallback_actions(dealer)[:2]
+
     except Exception:
-        return fallback_actions(dealer)
+        actions = fallback_actions(dealer)[:2]
+
+    tagged_actions = []
+    for action in actions:
+        if not isinstance(action, dict):
+            action = {"do": str(action), "why": "", "impact": ""}
+
+        llm_tag = action.get("primary_tag")
+        if llm_tag not in ALLOWED_LLM_PRIMARY_TAGS:
+            llm_tag = None
+
+        tag = llm_tag or assign_llm_tag(action, dealer)
+
+        tagged_actions.append({
+            "do": action.get("do", ""),
+            "why": action.get("why", ""),
+            "impact": action.get("impact", ""),
+            "tag": tag,
+            "tag_family": get_tag_family(tag),
+            "priority_base": TAG_SCHEMA[tag]["priority_base"],
+            "strength_score": get_strength_for_tag(tag),
+            "llm_primary_tag": action.get("primary_tag"),
+            "llm_tag_confidence": action.get("tag_confidence"),
+            "llm_tag_basis": action.get("tag_basis"),
+        })
+
+    return tagged_actions
 
 def fallback_actions(dealer: dict):
-    """Simple rule-based fallback actions"""
     is_new = safe_get(dealer, 'is_new_dealer', 0)
     has_no_orders = safe_get(dealer, 'has_no_orders', 0)
     dsl = safe_get(dealer, 'days_since_last_order', 0)
     opp_value, _ = calculate_opportunity(dealer)
-    
+
     actions = []
-    
     if is_new == 1 and has_no_orders == 1:
         actions.append({
             "do": "Call dealer immediately to activate account",
@@ -1063,26 +1183,25 @@ def fallback_actions(dealer: dict):
             "why": "Re-engage before dealer becomes inactive",
             "impact": "Resume regular ordering pattern"
         })
-    
+
     if opp_value > 0:
         actions.append({
             "do": "Close revenue gap to similar dealers",
             "why": "Dealer has capacity to grow",
             "impact": f"{fmt_rs(opp_value)} additional monthly revenue"
         })
-    
+
     products = safe_get(dealer, 'count_base_product_last_90d', 0)
     if products < 15:
         actions.append({
-            "do": f"Introduce {15-products} new product categories",
+            "do": f"Introduce {15-int(products)} new product categories",
             "why": "Limited product range restricts order size",
             "impact": "10-15% increase in order value"
         })
-    
+
     return actions[:3]
 
 def display_simple_metric(label, value, plain_text, status="healthy"):
-    """Simplified metric card with only 3 colors"""
     st.markdown(f"""
     <div class='metric-card {status}'>
         <div class='metric-label'>{label}</div>
@@ -1092,7 +1211,6 @@ def display_simple_metric(label, value, plain_text, status="healthy"):
     """, unsafe_allow_html=True)
 
 def get_product_gaps(dealer: dict):
-    """Simple product gap view based on category share columns"""
     category_cols = [
         ("Interior", "share_interior_180d"),
         ("Exterior", "share_exterior_180d"),
@@ -1101,11 +1219,11 @@ def get_product_gaps(dealer: dict):
         ("Texture", "share_texture_180d"),
         ("Ancillary", "share_ancillary_180d"),
     ]
-    
+
     missing = []
     low_share = []
     threshold_low = 0.05
-    
+
     for label, col in category_cols:
         if col not in dealer:
             continue
@@ -1113,14 +1231,14 @@ def get_product_gaps(dealer: dict):
         if share is None:
             continue
         try:
-            share_val = float(share)
+            share_val = to_float(share)
         except Exception:
             continue
         if share_val <= 0.0001:
             missing.append(label)
         elif share_val < threshold_low:
             low_share.append((label, share_val))
-    
+
     return missing, low_share
 
 # -----------------------------
@@ -1137,22 +1255,22 @@ if 'selected_dealer' not in st.session_state:
 with st.sidebar:
     st.markdown("<h1 style='text-align: center;'>🎯 TSM Actions</h1>", unsafe_allow_html=True)
     st.markdown("---")
-    
+
     st.subheader("📄 Load Data")
     try:
         file_path = 'clustered_dealer_master_improved_with_prodrecs.csv'
         st.session_state.df = pd.read_csv(file_path)
-        # st.success(f"✅ {len(st.session_state.df):,} dealers")
     except Exception:
-        uploaded = st.file_uploader("Upload CSV", type=['csv'])
-        if uploaded:
-            st.session_state.df = pd.read_csv(uploaded)
-            st.success(f"✅ {len(st.session_state.df):,} dealers")
+        # uploaded = st.file_uploader("Upload CSV", type=['csv'])
+        # if uploaded:
+        #     st.session_state.df = pd.read_csv(uploaded)
+        #     st.success(f"✅ {len(st.session_state.df):,} dealers")
+        st.error('No data found')
 
     if st.session_state.df is not None:
         st.markdown("---")
         st.subheader("🔍 Find Dealer")
-        
+
         search_type = st.radio("Search by:", ["Dealer ID", "Territory", "Area", "Priority"], label_visibility="collapsed")
         df = st.session_state.df
 
@@ -1166,13 +1284,13 @@ with st.sidebar:
             dealers_in_territory = df[df['territory_name'] == territory]['dealer_composite_id'].dropna().unique()
             selected = st.selectbox("Select Dealer:", dealers_in_territory)
             st.session_state.selected_dealer = selected
-            
+
         elif search_type == "Area":
             area = st.selectbox("Area:", sorted(df['asm_name'].dropna().unique()))
             dealers_in_area = df[df['asm_name'] == area]['dealer_composite_id'].dropna().unique()
             selected = st.selectbox("Select Dealer:", dealers_in_area)
             st.session_state.selected_dealer = selected
-            
+
         else:
             priority_col = 'priority_tier_OP'
             priority_tiers = sorted(df[priority_col].dropna().unique(), reverse=True)
@@ -1180,7 +1298,7 @@ with st.sidebar:
             dealers_priority = df[df[priority_col] == priority_tier]['dealer_composite_id'].dropna().unique()
             selected = st.selectbox("Select Dealer:", dealers_priority)
             st.session_state.selected_dealer = selected
-
+            
 # -----------------------------
 # Main Content
 # -----------------------------
@@ -1238,11 +1356,12 @@ if st.session_state.df is not None and st.session_state.selected_dealer is not N
         
         # NEXT BEST ACTION
         st.markdown("<br>", unsafe_allow_html=True)
-        nba_actions = generate_nba(dealer)
+        rule_nudges = generate_rule_nudges(dealer)
         
         nba_html = "<div class='nba-card'><div class='nba-title'>🎯 WHAT TO DO TODAY</div>"
-        for i, action in enumerate(nba_actions, 1):
-            nba_html += f"<div class='nba-action'><strong>{i}.</strong> {action}</div>"
+        for i, nudge in enumerate(rule_nudges, 1):
+            tag_badge = f"<span style='background: rgba(255,255,255,0.3); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; margin-left: 0.5rem;'>{nudge['tag']}</span>"
+            nba_html += f"<div class='nba-action'><strong>{i}.</strong> {nudge['text']} {tag_badge}</div>"
         nba_html += "</div>"
         st.markdown(nba_html, unsafe_allow_html=True)
         
@@ -1305,8 +1424,8 @@ if st.session_state.df is not None and st.session_state.selected_dealer is not N
 
         # Orders
         with col2:
-            orders = int(safe_get(dealer, 'total_orders_last_90d', 0))
-            orders_prev = int(safe_get(dealer, 'total_orders_prev_90d', 0))
+            orders =to_int(safe_get(dealer, 'total_orders_last_90d', 0))
+            orders_prev =to_int(safe_get(dealer, 'total_orders_prev_90d', 0))
             
             if has_no_orders == 1:
                 display_simple_metric(
@@ -1574,19 +1693,23 @@ if st.session_state.df is not None and st.session_state.selected_dealer is not N
         
         with tab1:
             st.subheader("AI-Powered Action Plan")
-            
             if st.button("🤖 Generate Custom Actions"):
                 with st.spinner("Analyzing dealer patterns..."):
-                    actions = generate_simple_ai_insights(dealer)
-                
+                    actions = generate_ai_nudges(dealer)
+
                 for i, action in enumerate(actions, 1):
+                    tag_color = "#667eea" if action['tag_family'] == 'LLM' else "#48bb78"
                     st.markdown(f"""
-                    <div class='action-card'>
-                        <div class='action-title'>Action {i}: {action['do']}</div>
+                    <div class='action-card' style='border-left-color: {tag_color};'>
+                        <div class='action-title'>
+                            Action {i}: {action['do']}
+                            <span style='background: {tag_color}; color: white; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.7rem; margin-left: 0.5rem;'>{action['tag']}</span>
+                        </div>
                         <div class='action-why'><strong>Why:</strong> {action['why']}</div>
                         <div class='action-impact'>💰 Impact: {action['impact']}</div>
                     </div>
                     """, unsafe_allow_html=True)
+
         
         with tab2:
             st.subheader("Additional Details")
@@ -1607,13 +1730,13 @@ if st.session_state.df is not None and st.session_state.selected_dealer is not N
             with c2: 
                 st.markdown("### Territory Position")
                 if has_no_orders == 0:
-                    rank = int(safe_get(dealer, 'dealer_rank_in_territory_revenue', 0))
-                    total = int(safe_get(dealer, 'territory_count_dealers', 0))
+                    rank =to_int(safe_get(dealer, 'dealer_rank_in_territory_revenue', 0))
+                    total =to_int(safe_get(dealer, 'territory_count_dealers', 0))
                     st.metric("Territory Rank", f"#{rank} of {total}")
                 else:
                     st.info("Territory ranking not applicable - no orders yet")
                 
-                tenure = int(safe_get(dealer, 'tenure_months', 0))
+                tenure =to_int(safe_get(dealer, 'tenure_months', 0))
                 st.metric("Tenure", f"{tenure} months")
                 
                 is_new = safe_get(dealer, 'is_new_dealer', 0)
