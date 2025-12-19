@@ -39,10 +39,19 @@ COLOR_MAP = {
     "GAP_VS_PEERS": "#0891b2",
 }
 
-def _get_ai_actions_cache():
+def _get_ai_actions_cache(max_items: int = 120):
     if "ai_actions_by_dealer" not in st.session_state:
         st.session_state.ai_actions_by_dealer = {}
-    return st.session_state.ai_actions_by_dealer
+
+    cache = st.session_state.ai_actions_by_dealer
+
+    # Soft cap: keep only the most recent ~max_items keys
+    if len(cache) > max_items:
+        # dict preserves insertion order in Py3.7+
+        for k in list(cache.keys())[: len(cache) - max_items]:
+            cache.pop(k, None)
+
+    return cache
 
 # -----------------------------
 # Init
@@ -262,11 +271,12 @@ def render_territory_dashboard(df: pd.DataFrame, territory_name: str, show_debug
     )
 
 def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
-    dealer = st.session_state.get("dealer_map", {}).get(dealer_id)
-    if not dealer:
+    dfi = st.session_state.get("df_indexed")
+    if dfi is None or dealer_id not in dfi.index:
         st.error("Dealer not found.")
         return
 
+    dealer = dfi.loc[dealer_id].to_dict()
     # ---- HEADER (FIX: must render as HTML) ----
     stamp = D.get_dealer_stamp(dealer)
     UI.render_dealer_header(
@@ -575,9 +585,9 @@ def main() -> None:
             if st.session_state.df is None:
                 st.session_state.df = DATA.load_dealer_df(FILE_PATH)
             if st.session_state.df is not None and not st.session_state.df.empty and "dealer_composite_id" in st.session_state.df.columns:
-                st.session_state.dealer_map = st.session_state.df.set_index("dealer_composite_id").to_dict("index")
+                st.session_state.df_indexed = st.session_state.df.set_index("dealer_composite_id", drop=False)
             else:
-                st.session_state.dealer_map = {}
+                st.session_state.df_indexed = None
             st.success(f"✅ {len(st.session_state.df):,} dealers loaded")
         except FileNotFoundError:
             st.error(f"❌ File not found: {FILE_PATH}")
