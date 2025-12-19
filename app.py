@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------
 # Config
 # -----------------------------
-FILE_PATH = "dealer_master_with_overdues.csv"
+FILE_PATH = "clustered_dealer_master_improved_with_prodrecs.csv"
 
 COLOR_MAP = {
     "HIGH_OVERDUE": "#dc2626",
