@@ -4,9 +4,6 @@ import logging
 import pandas as pd
 import streamlit as st
 
-# MUST be the first Streamlit call
-st.set_page_config(page_title="TSM Action Dashboard", page_icon="🎯", layout="wide")
-
 from utils import app_utils as U
 from utils import app_charts as C
 from utils import app_nudges as N
@@ -15,6 +12,9 @@ from utils import app_dealer as D
 from utils import app_state as S
 from utils import app_data as DATA
 from utils import app_ui as UI
+
+# MUST be the first Streamlit call
+st.set_page_config(page_title="TSM Action Dashboard", page_icon="🎯", layout="wide")
 
 # -----------------------------
 # Logging

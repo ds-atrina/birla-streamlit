@@ -7,7 +7,7 @@ class AppState:
 
     @staticmethod
     def init() -> None:
-        defaults = {
+        defaults: dict[str, object] = {
             "df": None,
             "view": AppState.VIEW_TERRITORY,
             "selected_territory": None,

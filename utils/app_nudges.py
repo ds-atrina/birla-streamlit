@@ -4,9 +4,15 @@ from __future__ import annotations
 import os
 import math
 import re
-import json
 import time
 import copy
+from nudge_tag import (
+    TAG_SCHEMA,
+    get_tag_family,
+    assign_rule_tag_v2,
+    assign_llm_tag,
+    get_strength_for_tag,
+)
 
 try:
     import jsonschema
@@ -15,7 +21,7 @@ except Exception:
     jsonschema = None
     _HAS_JSONSCHEMA = False
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from utils import app_utils as U
 
@@ -25,21 +31,15 @@ try:
 except Exception:
     pass
 
+# Lang model client - may not be installed in some environments.
+ChatGoogleGenerativeAI: Optional[Any] = None
 try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_google_genai import ChatGoogleGenerativeAI as _ChatGoogleGenerativeAI
+    ChatGoogleGenerativeAI = _ChatGoogleGenerativeAI
 except Exception:
     ChatGoogleGenerativeAI = None
 
-from nudge_tag import (
-    TAG_SCHEMA,
-    get_tag_family,
-    assign_rule_tag_v2,
-    assign_llm_tag,
-    get_strength_for_tag,
-)
-
 logger = logging.getLogger(__name__)
-
 
 # --------------------------------------------------------------------------------------
 # Small helpers
@@ -252,8 +252,8 @@ def generate_collections_nudges(dealer: dict) -> List[dict]:
         actions.append({
             "text": (
                 f"Collections Alert: ₹{overdue_amt:,.0f} OVERDUE. "
-                f"Visit dealer today - understand reason (dispute/cash flow/missed reminder), "
-                f"negotiate partial payment if needed, lock payment date."
+                "Visit dealer today - understand reason (dispute/cash flow/missed reminder), "
+                "negotiate partial payment if needed, lock payment date."
             ),
             "priority": 10_000,  # ensure first globally
             "key": "COLLECTIONS_OVERDUE",
@@ -266,8 +266,8 @@ def generate_collections_nudges(dealer: dict) -> List[dict]:
         actions.append({
             "text": (
                 f"Collections URGENT: ₹{due_today:,.0f} payment due TODAY. "
-                f"Call dealer immediately - confirm payment status and mode (NEFT/cheque/cash). "
-                f"If delayed, get commitment for tomorrow with exact time."
+                "Call dealer immediately - confirm payment status and mode (NEFT/cheque/cash). "
+                "If delayed, get commitment for tomorrow with exact time."
             ),
             "priority": 200,
             "key": "COLLECTIONS_DUE_TODAY",
@@ -277,7 +277,7 @@ def generate_collections_nudges(dealer: dict) -> List[dict]:
         actions.append({
             "text": (
                 f"Collections Reminder: ₹{due_tomorrow:,.0f} due tomorrow. "
-                f"Call dealer today for proactive reminder - confirm they have funds ready."
+                "Call dealer today for proactive reminder - confirm they have funds ready."
             ),
             "priority": 150,
             "key": "COLLECTIONS_DUE_TOMORROW",
@@ -287,7 +287,7 @@ def generate_collections_nudges(dealer: dict) -> List[dict]:
         actions.append({
             "text": (
                 f"Collections Watch: ₹{due_in7:,.0f} due within 7 days. "
-                f"Courtesy call - remind dealer of upcoming payment, ask if any issues expected."
+                "Courtesy call - remind dealer of upcoming payment, ask if any issues expected."
             ),
             "priority": 50,
             "key": "COLLECTIONS_DUE_IN_7",
@@ -297,7 +297,7 @@ def generate_collections_nudges(dealer: dict) -> List[dict]:
         actions.append({
             "text": (
                 f"High Outstanding: ₹{os_amt:,.0f} total OS (not yet overdue). "
-                f"Regular follow-up call - maintain relationship, ensure timely payment culture."
+                "Regular follow-up call - maintain relationship, ensure timely payment culture."
             ),
             "priority": 50,
             "key": "COLLECTIONS_HIGH_OS",
@@ -334,7 +334,6 @@ def generate_rule_nudges(dealer: dict, max_actions: int = 2) -> List[dict]:
     is_new = (is_new_flag == 1) or (tenure_months <= 1)
 
     dsl = U.to_int(U.safe_get(dealer, "days_since_last_order", 0), 0)
-    orders_90 = U.to_int(U.safe_get(dealer, "total_orders_last_90d", 0), 0)
 
     # Trends
     rev_30 = U.to_float(U.safe_get(dealer, "total_revenue_last_30d", 0.0), 0.0)
@@ -642,7 +641,7 @@ CORE PRODUCTS (dealer already buys a lot):
 {format_candidates(dealer_top, "dealer_top")}
 """
 
-    instructions = f"""
+    instructions = """
 You are writing for a Territory Sales Manager (TSM). Tone: simple, spoken, direct.
 
 Return ONLY valid JSON matching the schema below. (no extra text)

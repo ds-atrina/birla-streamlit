@@ -6,6 +6,12 @@ These will be refined using historical data in Phase 2.
 UPDATED: Added COLLECTIONS tags for overdue/outstanding management
 """
 
+import os
+import pandas as pd
+import numpy as np
+from datetime import datetime
+
+
 TAG_SCHEMA = {
     # ==================== COLLECTIONS TAGS (HIGHEST PRIORITY) ====================
     "OVERDUE_DUE_TODAY": {
@@ -488,23 +494,19 @@ def validate_tag(tag: str) -> bool:
     """Check if tag exists in schema"""
     return tag in TAG_SCHEMA
 
+
 """
 CSV-based storage for nudges, outcomes, and tag performance.
 """
-
-import os
-import pandas as pd
-import numpy as np
-from datetime import datetime
 
 STORAGE_DIR = "data/nudges"
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
 NUDGE_COLUMNS = [
-    "text","tag","tag_family","priority_base","strength_score","context_boost","final_score",
-    "nudge_id","dealer_id","final_rank","generation_date",
-    "do","why","impact",
-    "llm_primary_tag","llm_tag_confidence","llm_tag_basis",
+    "text", "tag", "tag_family", "priority_base", "strength_score", "context_boost", "final_score", 
+    "nudge_id", "dealer_id", "final_rank", "generation_date", 
+    "do", "why", "impact", 
+    "llm_primary_tag", "llm_tag_confidence", "llm_tag_basis", 
 ]
 
 def save_nudges(nudges, month: str) -> str:
@@ -589,7 +591,7 @@ def save_tag_performance(df: pd.DataFrame) -> str:
     tmp_fp = filepath + ".tmp"
     df.to_csv(tmp_fp, index=False)
     os.replace(tmp_fp, filepath)
-    print(f"✅ Updated tag performance")
+    print("✅ Updated tag performance")
     return filepath
 
 
@@ -677,4 +679,3 @@ def get_strength_for_tag(tag: str) -> float:
 #     if len(row) > 0:
 #         return row.iloc[0]['strength_score']
 #     return 0.0
-

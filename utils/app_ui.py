@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import html
-from typing import Callable, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable
 
 import pandas as pd
 import streamlit as st
@@ -167,7 +167,7 @@ def inject_css() -> None:
 """, unsafe_allow_html=True)
 
 
-def metric_card(label: str, value: str, plain_text: str, status: str = "healthy") -> None:
+def metric_card(label: str, value: Any, plain_text: str, status: str = "healthy") -> None:
     st.markdown(f"""
     <div class='metric-card {esc(status)}'>
         <div class='metric-label'>{esc(label)}</div>

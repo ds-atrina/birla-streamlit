@@ -23,7 +23,7 @@ def test_update_tag_performance_updates(tmp_path):
     tmp.mkdir(exist_ok=True)
 
     # initialize performance file
-    perf = nt.initialize_tag_performance()
+    _ = nt.initialize_tag_performance()
 
     # Create a simple outcomes dataframe with one dealer having LLM_GENERAL and revenue increase
     outcomes = pd.DataFrame([
