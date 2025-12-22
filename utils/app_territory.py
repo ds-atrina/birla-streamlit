@@ -135,9 +135,7 @@ def generate_combined_call_list(territory_df: pd.DataFrame, top_n: int = 50) -> 
         except Exception:
             od = 0.0
 
-        if od > 50000:
-            reasons.append('HIGH_OVERDUE')
-        elif od > 0:
+        if od > 0:
             reasons.append('OVERDUE')
 
         if row.get('due_tomorrow_total', 0) > 0:

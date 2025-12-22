@@ -38,6 +38,34 @@ def coerce_dealer_df(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].astype("category")
 
+    # Ensure dealer id is a consistent string type to avoid indexing issues
+    if 'dealer_composite_id' in df.columns:
+        df['dealer_composite_id'] = df['dealer_composite_id'].astype(str)
+
+    # Canonicalize typical invoice / avg order value fields to avoid divergent column names
+    # Pick the first available candidate and populate common aliases
+    invoice_candidates = [
+        'avg_order_value_last_90d',
+        'avg_invoice_value_90d',
+        'typical_invoice_size',
+        'avg_invoice_value_90d'
+    ]
+
+    typical_series = None
+    for c in invoice_candidates:
+        if c in df.columns:
+            typical_series = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+            break
+
+    if typical_series is None:
+        typical_series = pd.Series(0.0, index=df.index)
+
+    # Ensure all common aliases exist and are numeric
+    for alias in ['avg_order_value_last_90d', 'avg_invoice_value_90d', 'typical_invoice_size']:
+        if alias in df.columns:
+            df[alias] = pd.to_numeric(df[alias], errors='coerce').fillna(0.0)
+        else:
+            df[alias] = typical_series.copy()
     return df
 
 
@@ -74,7 +102,6 @@ def extract_all_reasons(action_df: pd.DataFrame, reason_col: str = "reason_chips
 
     # Preferred order (case-insensitive matching)
     preferred_order = [
-        "high_overdue",
         "overdue",
         "churn_risk",
         "declining",

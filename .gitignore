@@ -1,3 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual env
+.venv/
+venv/
+ENV/
+env/
+
+# Pytest
+.pytest_cache/
+
+# Byte-compiled / optimized / DLL files
+*.so
+
+# Jupyter
+.ipynb_checkpoints
+
+# Environment files
+.env
+envrc
+
+# Data / generated LLM raw responses
+data/nudges/llm_raw/
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-workspace
 venv/
 .env
 __pycache__/

@@ -514,7 +514,9 @@ def save_nudges(nudges, month: str) -> str:
             df[c] = ""
     df = df[NUDGE_COLUMNS].fillna("")
     filepath = os.path.join(STORAGE_DIR, f"nudges_generated_{month}.csv")
-    df.to_csv(filepath, index=False)
+    tmp_fp = filepath + ".tmp"
+    df.to_csv(tmp_fp, index=False)
+    os.replace(tmp_fp, filepath)
     print(f"✅ Saved {len(df)} nudges to {filepath}")
     return filepath
 
@@ -529,7 +531,9 @@ def load_nudges(month: str):
 def save_outcomes(outcomes, month: str) -> str:
     df = pd.DataFrame(outcomes)
     filepath = os.path.join(STORAGE_DIR, f"dealer_outcomes_{month}.csv")
-    df.to_csv(filepath, index=False)
+    tmp_fp = filepath + ".tmp"
+    df.to_csv(tmp_fp, index=False)
+    os.replace(tmp_fp, filepath)
     print(f"✅ Saved {len(outcomes)} outcomes to {filepath}")
     return filepath
 
@@ -567,14 +571,24 @@ def initialize_tag_performance() -> pd.DataFrame:
 def load_tag_performance() -> pd.DataFrame:
     filepath = os.path.join(STORAGE_DIR, "tag_performance.csv")
     if os.path.exists(filepath):
-        return pd.read_csv(filepath)
+        df = pd.read_csv(filepath)
+        # Cast numeric columns to proper types
+        for c in ['baseline_success_rate', 'observed_success_rate', 'lift_over_baseline', 'confidence', 'strength_score']:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+        for c in ['times_shown', 'times_succeeded']:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
+        return df
     else:
         return initialize_tag_performance()
 
 
 def save_tag_performance(df: pd.DataFrame) -> str:
     filepath = os.path.join(STORAGE_DIR, "tag_performance.csv")
-    df.to_csv(filepath, index=False)
+    tmp_fp = filepath + ".tmp"
+    df.to_csv(tmp_fp, index=False)
+    os.replace(tmp_fp, filepath)
     print(f"✅ Updated tag performance")
     return filepath
 
@@ -592,7 +606,15 @@ def update_tag_performance(outcomes_df: pd.DataFrame, month: str) -> pd.DataFram
         if len(dealers_with_tag) == 0:
             continue
         
-        expected_outcome = TAG_SCHEMA[tag]['expected_outcome']
+        expected_outcome = TAG_SCHEMA.get(tag, {}).get('expected_outcome')
+        if expected_outcome is None:
+            # Unknown tag in performance file; skip updating this row
+            logger_msg = f"Unknown tag in TAG_SCHEMA: {tag}; skipping performance update"
+            try:
+                print(logger_msg)
+            except Exception:
+                pass
+            continue
         
         # Collections outcomes
         if expected_outcome in ['payment_collected_7d', 'payment_collected_14d', 'payment_collected_30d']:
@@ -611,18 +633,28 @@ def update_tag_performance(outcomes_df: pd.DataFrame, month: str) -> pd.DataFram
             success_count = dealers_with_tag['ordered'].sum()
         
         n = len(dealers_with_tag)
-        observed_rate = success_count / n if n > 0 else 0.0
-        baseline_rate = row['baseline_success_rate']
-        
+        observed_rate = float(success_count) / n if n > 0 else 0.0
+        try:
+            baseline_rate = float(row.get('baseline_success_rate', 0.0))
+        except Exception:
+            baseline_rate = 0.0
+
         lift = (observed_rate - baseline_rate) / baseline_rate if baseline_rate > 0 else 0.0
-        confidence = min(1.0, n / 30.0)
-        strength = np.tanh(lift) * confidence
-        
-        old_shown = row['times_shown']
-        old_succeeded = row['times_succeeded']
+        confidence = min(1.0, float(n) / 30.0)
+        strength = float(np.tanh(lift) * confidence)
+
+        old_shown = int(row.get('times_shown') or 0)
+        old_succeeded = int(row.get('times_succeeded') or 0)
         new_total_shown = old_shown + n
-        new_total_succeeded = old_succeeded + success_count
-        
+        new_total_succeeded = old_succeeded + int(success_count or 0)
+
+        # Persist computed metrics into tag_perf dataframe
+        tag_perf.at[idx, 'observed_success_rate'] = observed_rate
+        tag_perf.at[idx, 'lift_over_baseline'] = lift
+        tag_perf.at[idx, 'confidence'] = confidence
+        tag_perf.at[idx, 'strength_score'] = strength
+        tag_perf.at[idx, 'times_shown'] = new_total_shown
+        tag_perf.at[idx, 'times_succeeded'] = new_total_succeeded
         tag_perf.at[idx, 'last_updated'] = datetime.now().strftime('%Y-%m-%d')
     
     save_tag_performance(tag_perf)

@@ -1,4 +1,8 @@
-streamlit 
+streamlit
 plotly
 langchain-google-genai
-dotenv
+python-dotenv
+pytest
+jsonschema
+flake8
+mypy

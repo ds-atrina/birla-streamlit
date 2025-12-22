@@ -28,8 +28,7 @@ logger = logging.getLogger(__name__)
 FILE_PATH = "clustered_dealer_master_improved_with_prodrecs.csv"
 
 COLOR_MAP = {
-    "HIGH_OVERDUE": "#dc2626",
-    "OVERDUE": "#ea580c",
+    "OVERDUE": "#dc2626",
     "CHURN_RISK": "#991b1b",
     "DECLINING": "#9a3412",
     "DUE_TODAY": "#f97316",
@@ -230,8 +229,6 @@ def render_territory_dashboard(df: pd.DataFrame, territory_name: str, show_debug
         selection_mode="multi",
         label_visibility="collapsed",
     )
-    if reason_filter:
-        UI.render_reason_chips(reason_filter, COLOR_MAP)
 
     if action_df.empty:
         st.info("No high-priority dealers today - territory is in good shape!")

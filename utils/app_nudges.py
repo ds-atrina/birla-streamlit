@@ -4,6 +4,16 @@ from __future__ import annotations
 import os
 import math
 import re
+import json
+import time
+import copy
+
+try:
+    import jsonschema
+    _HAS_JSONSCHEMA = True
+except Exception:
+    jsonschema = None
+    _HAS_JSONSCHEMA = False
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -53,12 +63,44 @@ def _extract_json_object(text: str) -> Optional[str]:
     cleaned = re.sub(r"^```(json)?", "", cleaned, flags=re.IGNORECASE).strip()
     cleaned = re.sub(r"```$", "", cleaned).strip()
 
-    # Find first '{' and last '}' and slice
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    # Try fenced code block first
+    m = re.search(r"```json\s*(\{.*?\})\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    # Fallback: find a balanced JSON object by scanning for matching braces
+    start_idx = cleaned.find("{")
+    if start_idx == -1:
         return None
-    return cleaned[start : end + 1]
+
+    depth = 0
+    for i in range(start_idx, len(cleaned)):
+        ch = cleaned[i]
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                # return the balanced JSON substring
+                return cleaned[start_idx : i + 1]
+
+    return None
+
+
+def _validate_llm_insights(insights: dict) -> bool:
+    """Basic validation for LLM JSON: must be a dict with an 'actions' list of action dicts.
+    Each action should contain at least 'do' and 'primary_tag'."""
+    if not isinstance(insights, dict):
+        return False
+    actions = insights.get("actions")
+    if not isinstance(actions, list) or len(actions) == 0:
+        return False
+    for a in actions:
+        if not isinstance(a, dict):
+            return False
+        if "do" not in a or "primary_tag" not in a:
+            return False
+    return True
 
 
 def _safe_llm_impact(dealer: dict, action: dict) -> str:
@@ -447,7 +489,7 @@ def generate_rule_nudges(dealer: dict, max_actions: int = 2) -> List[dict]:
 
             "tag": tag,
             "tag_family": get_tag_family(tag),
-            "priority_base": TAG_SCHEMA[tag]["priority_base"],
+            "priority_base": TAG_SCHEMA.get(tag, TAG_SCHEMA.get("LLM_GENERAL", {})).get("priority_base", 0),
             "strength_score": get_strength_for_tag(tag),
 
             "llm_primary_tag": tag,  # filled for rule too (schema consistency)
@@ -617,14 +659,14 @@ TAG RULES (STRICT)
 - NO OVERLAP RULE (CRITICAL):
   - Do not repeat the same category/sub-category theme across actions.
   - If you use the LLM_REPURCHASE_DUE tag for a product, you CANNOT also use the LLM_INACTIVE_CATEGORY tag for that product's category/sub-category (and vice versa). Choose the framing that yields the highest impact.
-  - **CRITICAL NO OVERLAP REFINEMENT:** If you select **LLM\_INACTIVE\_CATEGORY**, you **MUST NOT** reference any specific product that is also flagged for **DUE\_FOR\_WINBACK** or **DUE\_FOR\_REORDER** in the `PRODUCT CANDIDATES` list within the action's `do` or `why` fields. Focus only on the category theme.
+  - **CRITICAL NO OVERLAP REFINEMENT:** If you select **LLM_INACTIVE_CATEGORY**, you **MUST NOT** reference any specific product that is also flagged for **DUE_FOR_WINBACK** or **DUE_FOR_REORDER** in the `PRODUCT CANDIDATES` list within the action's `do` or `why` fields. Focus only on the category theme.
 
 DORMANT / ZERO-ACTIVITY OVERRIDE (STRICT)
 - **Check based on Summary Block fields:** If Orders in last 90d = 0 OR Days since last order >= 120 OR Zero activity flag (90d) is YES:
   - Return **EXACTLY ONE** action only.
-  - primary_tag **MUST** be **LLM\_GENERAL**.
+  - primary_tag **MUST** be **LLM_GENERAL**.
   - That ONE action must include a “starter basket” (2-3 items) pulled from TERRITORY HERO and/or REPURCHASE candidates (if any).
-  - Do **NOT** output **LLM\_INACTIVE\_CATEGORY / LLM\_TERRITORY\_HERO / LLM\_CROSS\_SELL** as separate actions for dormant dealers.
+  - Do **NOT** output **LLM_INACTIVE_CATEGORY / LLM_TERRITORY_HERO / LLM_CROSS_SELL** as separate actions for dormant dealers.
 
 CANDIDATE FIDELITY
 - Use ONLY product/category names from PRODUCT CANDIDATES. Never invent names.
@@ -632,9 +674,9 @@ CANDIDATE FIDELITY
 
 PRIORITY (HIGH-IMPACT ORDER)
 1. **CRITICAL SECURITY (OVERRIDE):** If the dealer is DECLINING or CHURN RISK is high, you MUST prioritize **HIGH-URGENCY REPURCHASE** or a **DEFEND SHARE** action as Action 1.
-1a. **DEFEND CORE REVENUE (REQUIRED ACTION 1 or 2):** For declining or high-churn dealers, Action 1 or 2 **MUST** be a **DEFEND SHARE** action (Securing *LLM\_DEALER\_TOP\_PRODUCTS* or *LLM\_TERRITORY\_HERO* with lift = 0). Frame this using **LLM\_TERRITORY\_HERO** or **LLM\_GENERAL**.
+1a. **DEFEND CORE REVENUE (REQUIRED ACTION 1 or 2):** For declining or high-churn dealers, Action 1 or 2 **MUST** be a **DEFEND SHARE** action (Securing *LLM_DEALER_TOP_PRODUCTS* or *LLM_TERRITORY_HERO* with lift = 0). Frame this using **LLM_TERRITORY_HERO** or **LLM_GENERAL**.
 2. **SECURE/RECOVER:** If REPURCHASE has WINBACK/HIGH/overdue, or INACTIVE CATEGORY has a high peer gap, prioritize these (highest impact first).
-3. **DECLINING / HIGH-RISK GUARDRAIL:** If Revenue trend (30d) <= -20% OR Churn risk > 1.0 OR Dropping off is YES: Do **NOT** use **LLM\_CROSS\_SELL** unless no repurchase/defend candidates exist.
+3. **DECLINING / HIGH-RISK GUARDRAIL:** If Revenue trend (30d) <= -20% OR Churn risk > 1.0 OR Dropping off is YES: Do **NOT** use **LLM_CROSS_SELL** unless no repurchase/defend candidates exist.
 4. **ACTIVATE/EXPAND:** For others, use CROSS-SELL / TERRITORY HERO for expansion only after "secure/recover" is covered.
 5. New/no-orders: focus ACTIVATE first (hero starter basket).
 
@@ -648,11 +690,11 @@ Don't say “booming/growing/weak” unless you reference a signal (trend/churn/
 
 IMPACT (realistic, next 30d)
 - Repurchase: use typical_order_value (sum of bundled items) as basis.
-- Inactive category: partial recovery only; cap at <= past\_mo and usually <= 50% of peer\_mo.
+- Inactive category: partial recovery only; cap at <= past_mo and usually <= 50% of peer_mo.
 - Cross/territory hero new product: trial add-on; keep conservative.
 - **IMPACT FORMAT STRICT:** impact must **ALWAYS** be a range "~₹X-₹Y". If you only have one calculated value V, output "~₹(0.8V)-₹(1.2V)".
 - **IMPACT FOR GENERAL/DROPPED OFF (CRITICAL):** Must provide a **numeric range** (~₹X-₹Y) based on the dealer's **Typical Invoice Size** or their **Baseline Monthly Sales** to represent the revenue secured from the first re-activation order.
-- **DEFEND\_SHARE IMPACT RULE (NO GUESSING):** If recommendation\_type is DEFEND\_SHARE or lift = 0: impact MUST be "~₹X-₹Y" and computed from **ONE** provided field only: **benchmark\_monthly\_sales** OR **avg\_monthly\_sales** (from CORE PRODUCTS) OR **typical\_invoice**. tag\_basis MUST include the exact field used (e.g., "bench=10230" or "dealer\_top\_mo=80000").
+- **DEFEND_SHARE IMPACT RULE (NO GUESSING):** If recommendation_type is DEFEND_SHARE or lift = 0: impact MUST be "~₹X-₹Y" and computed from **ONE** provided field only: **benchmark_monthly_sales** OR **avg_monthly_sales** (from CORE PRODUCTS) OR **typical_invoice**. tag_basis MUST include the exact field used (e.g., "bench=10230" or "dealer_top_mo=80000").
 
 STYLE (TSM SCRIPT FORMAT MANDATORY)
 - "do" must contain:
@@ -680,11 +722,27 @@ OUTPUT JSON (STRICT)
     return summary_block + "\n" + product_block + "\n" + instructions
 
 
+def _redact_dealer_for_llm(dealer: dict) -> dict:
+    """Return a shallow copy of dealer with PII redacted before sending to LLM.
+    Removes customer_name, city/state, asm_name and dealer ids; keeps numeric signals."""
+    if not isinstance(dealer, dict):
+        return dealer
+    d = copy.deepcopy(dealer)
+    for k in [
+        'customer_name', 'city_name', 'state_name', 'asm_name', 'dealer_composite_id', 'dealer_id', 'first_order_date', 'last_order_date'
+    ]:
+        if k in d:
+            d[k] = 'REDACTED'
+    return d
+
+
 def generate_ai_nudges(dealer: dict, model=None) -> List[dict]:
     """
     Generates LLM nudges. If LLM fails, returns fallback actions (but normalized & tagged).
     """
-    context = get_context(dealer)
+    # Redact PII before building context sent to the LLM
+    redacted = _redact_dealer_for_llm(dealer)
+    context = get_context(redacted)
 
     try:
         if ChatGoogleGenerativeAI is None:
@@ -710,13 +768,67 @@ def generate_ai_nudges(dealer: dict, model=None) -> List[dict]:
 
         json_blob = _extract_json_object(response_text)
         if not json_blob:
-            logger.warning("LLM response had no JSON object; using fallback actions.")
+            logger.warning("LLM response had no JSON object; saving raw and using fallback actions.")
+            try:
+                raw_dir = os.path.join("data", "nudges", "llm_raw")
+                os.makedirs(raw_dir, exist_ok=True)
+                dealer_id = str(dealer.get("dealer_composite_id") or dealer.get("dealer_id") or "unknown")
+                fname = f"raw_{dealer_id}_{int(time.time())}.txt"
+                with open(os.path.join(raw_dir, fname), "w", encoding="utf-8") as fh:
+                    fh.write(response_text)
+            except Exception:
+                logger.exception("Failed to write raw LLM response")
+
             actions = fallback_actions(dealer)
             return _tag_llm_actions(actions, dealer)
 
         insights = U.parse_json_relaxed(json_blob)
-        if not (isinstance(insights, dict) and isinstance(insights.get("actions"), list)):
-            logger.warning("LLM JSON parsed but schema invalid; using fallback actions.")
+        # Prefer strict jsonschema validation if available
+        schema_ok = False
+        if insights and isinstance(insights, dict):
+            if _HAS_JSONSCHEMA:
+                try:
+                    # schema: top-level dict with 'actions' as array of objects with required fields
+                    LLM_ACTIONS_SCHEMA = {
+                        "type": "object",
+                        "properties": {
+                            "actions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "do": {"type": "string"},
+                                        "why": {"type": "string"},
+                                        "impact": {"type": "string"},
+                                        "primary_tag": {"type": "string"},
+                                        "tag_confidence": {"type": ["number", "null"]},
+                                        "tag_basis": {"type": ["string", "null"]}
+                                    },
+                                    "required": ["do", "primary_tag"]
+                                }
+                            }
+                        },
+                        "required": ["actions"]
+                    }
+                    jsonschema.validate(instance=insights, schema=LLM_ACTIONS_SCHEMA)
+                    schema_ok = True
+                except Exception:
+                    schema_ok = False
+            else:
+                schema_ok = _validate_llm_insights(insights)
+
+        if not schema_ok:
+            logger.warning("LLM JSON parsed but schema invalid; saving raw and using fallback actions.")
+            try:
+                raw_dir = os.path.join("data", "nudges", "llm_raw")
+                os.makedirs(raw_dir, exist_ok=True)
+                dealer_id = str(dealer.get("dealer_composite_id") or dealer.get("dealer_id") or "unknown")
+                fname = f"invalid_{dealer_id}_{int(time.time())}.txt"
+                with open(os.path.join(raw_dir, fname), "w", encoding="utf-8") as fh:
+                    fh.write(response_text)
+            except Exception:
+                logger.exception("Failed to write raw invalid LLM response")
+
             actions = fallback_actions(dealer)
             return _tag_llm_actions(actions, dealer)
 
@@ -741,7 +853,22 @@ def _tag_llm_actions(actions: List[dict], dealer: dict) -> List[dict]:
             llm_primary = None
 
         # Final tag for schema (your system)
-        tag = llm_primary or assign_llm_tag(action, dealer)
+        try:
+            tag = llm_primary or assign_llm_tag(action, dealer)
+        except Exception:
+            logger.exception("assign_llm_tag failed; falling back to LLM_GENERAL")
+            tag = "LLM_GENERAL"
+
+        if tag not in TAG_SCHEMA:
+            logger.warning("Resolved tag '%s' not in TAG_SCHEMA; falling back to LLM_GENERAL", tag)
+            tag = "LLM_GENERAL"
+
+        # Coerce confidence
+        try:
+            conf = float(action.get("tag_confidence") or 0.0)
+        except Exception:
+            conf = 0.0
+        conf = max(0.0, min(1.0, conf))
 
         tagged_actions.append({
             "do": action.get("do", ""),
@@ -750,12 +877,12 @@ def _tag_llm_actions(actions: List[dict], dealer: dict) -> List[dict]:
 
             "tag": tag,
             "tag_family": get_tag_family(tag),
-            "priority_base": TAG_SCHEMA[tag]["priority_base"],
+            "priority_base": TAG_SCHEMA.get(tag, TAG_SCHEMA.get("LLM_GENERAL", {})).get("priority_base", 0),
             "strength_score": get_strength_for_tag(tag),
 
             "llm_primary_tag": action.get("primary_tag"),
-            "llm_tag_confidence": action.get("tag_confidence"),
-            "llm_tag_basis": action.get("tag_basis"),
+            "llm_tag_confidence": conf,
+            "llm_tag_basis": action.get("tag_basis") or action.get("tag_basis") or "",
         })
 
     return tagged_actions

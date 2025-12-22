@@ -320,7 +320,7 @@ HOW_TO_USE_MD = """
 **Rule Actions (Instant)**
 - Always shown immediately (no button click)
 - Prioritizes critical situations:
-  - **High overdue / overdue**
+  - **Overdue**
   - **Churn risk / declining**
   - **Due today / tomorrow / in 7**
   - **Gap vs peers / inactive**
