@@ -82,7 +82,7 @@ def _extract_json_object(text: str) -> Optional[str]:
             depth -= 1
             if depth == 0:
                 # return the balanced JSON substring
-                return cleaned[start_idx : i + 1]
+                return cleaned[start_idx: i + 1]
 
     return None
 
@@ -173,16 +173,16 @@ def get_subbrand_nudges(dealer: dict, enabled: bool = True) -> List[dict]:
 
     actions: List[dict] = []
     subbrand_shares = {
-        "Allwood":      U.to_float(U.safe_get(dealer, "share_revenue_allwood_180d", 0.0), 0.0),
-        "Prime":        U.to_float(U.safe_get(dealer, "share_revenue_prime_180d", 0.0), 0.0),
-        "Allwood Pro":  U.to_float(U.safe_get(dealer, "share_revenue_allwoodpro_180d", 0.0), 0.0),
-        "One":          U.to_float(U.safe_get(dealer, "share_revenue_one_180d", 0.0), 0.0),
-        "Calista":      U.to_float(U.safe_get(dealer, "share_revenue_calista_180d", 0.0), 0.0),
-        "Style":        U.to_float(U.safe_get(dealer, "share_revenue_style_180d", 0.0), 0.0),
-        "AllDry":       U.to_float(U.safe_get(dealer, "share_revenue_alldry_180d", 0.0), 0.0),
-        "Artist":       U.to_float(U.safe_get(dealer, "share_revenue_artist_180d", 0.0), 0.0),
-        "Sample Kit":   U.to_float(U.safe_get(dealer, "share_revenue_samplekit_180d", 0.0), 0.0),
-        "Collaterals":  U.to_float(U.safe_get(dealer, "share_revenue_collaterals_180d", 0.0), 0.0),
+        "Allwood": U.to_float(U.safe_get(dealer, "share_revenue_allwood_180d", 0.0), 0.0),
+        "Prime": U.to_float(U.safe_get(dealer, "share_revenue_prime_180d", 0.0), 0.0),
+        "Allwood Pro": U.to_float(U.safe_get(dealer, "share_revenue_allwoodpro_180d", 0.0), 0.0),
+        "One": U.to_float(U.safe_get(dealer, "share_revenue_one_180d", 0.0), 0.0),
+        "Calista": U.to_float(U.safe_get(dealer, "share_revenue_calista_180d", 0.0), 0.0),
+        "Style": U.to_float(U.safe_get(dealer, "share_revenue_style_180d", 0.0), 0.0),
+        "AllDry": U.to_float(U.safe_get(dealer, "share_revenue_alldry_180d", 0.0), 0.0),
+        "Artist": U.to_float(U.safe_get(dealer, "share_revenue_artist_180d", 0.0), 0.0),
+        "Sample Kit": U.to_float(U.safe_get(dealer, "share_revenue_samplekit_180d", 0.0), 0.0),
+        "Collaterals": U.to_float(U.safe_get(dealer, "share_revenue_collaterals_180d", 0.0), 0.0),
     }
 
     dominant_brand, dominant_share = max(subbrand_shares.items(), key=lambda kv: kv[1])
@@ -621,7 +621,6 @@ RISK
 
         return "\n".join(lines) if lines else "None"
 
-
     product_block = f"""
 PRODUCT CANDIDATES (use names exactly; do NOT invent products)
 
@@ -917,7 +916,7 @@ def fallback_actions(dealer: dict) -> List[dict]:
     products = U.to_int(U.safe_get(dealer, "count_base_product_last_90d", 0), 0)
     if products < 15:
         actions.append({
-            "do": f"Visit this week; ask which categories are being bought from competitors and close 2 trial SKUs.",
+            "do": "Visit this week; ask which categories are being bought from competitors and close 2 trial SKUs.",
             "why": "Limited product range restricts order size.",
             "impact": f"{_impact_range(8000.0)} this month (basis trial add-on)"
         })

@@ -294,13 +294,68 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
     # Status
     status_level, status_text, status_msg = D.get_dealer_status(dealer)
     UI.render_status_banner(status_level, status_text, status_msg)
+    
+    st.subheader("🎯 Dealer Action Plan")
 
+    # 1) Always compute rule nudges immediately (2 items)
+    rule_nudges = N.generate_rule_nudges(dealer)  # already returns normalized-ish dicts
+    dealer_key = U.safe_get(dealer, "dealer_composite_id", None) or dealer_id
+
+    # 2) Pull cached AI nudges (if already generated for this dealer)
+    ai_cache = _get_ai_actions_cache()
+    ai_nudges = ai_cache.get(dealer_key, [])
+
+    # 3) Button generates AI nudges on-demand (3 items)
+    cbtn1, cbtn2 = st.columns([1, 3], vertical_alignment="center")
+    with cbtn1:
+        if st.button("🤖 Generate AI Nudges", key=f"btn_ai_actions_{dealer_key}"):
+            with st.spinner("Analyzing dealer patterns..."):
+                ai_cache[dealer_key] = N.generate_ai_nudges(dealer)  # returns list[dict]
+            st.rerun()
+
+    with cbtn2:
+        # st.caption("AI nudges generated for this dealer (cached for this session).")
+        pass
+
+    # 4) Combine into ONE output format: first 2 rule + next 3 AI
+    combined_actions = N.combine_rule_and_ai_actions(rule_nudges, ai_nudges, max_rule=2, max_ai=3)
+
+    if not combined_actions:
+        st.info("No actions available for this dealer.")
+    else:
+        for i, action in enumerate(combined_actions, 1):
+            # color by source
+            tag_color = "#48bb78" if action.get("source") == "RULE" else "#667eea"
+            source_badge = action.get("source", "")
+
+            st.markdown(
+                f"""
+                <div class='action-card' style='border-left-color: {tag_color};'>
+                    <div class='action-title'>
+                        Action {i}: {UI.esc(action.get('do',''))}
+                        <span style='background: {tag_color}; color: white; padding: 0.25rem 0.5rem;
+                                    border-radius: 4px; font-size: 0.7rem; margin-left: 0.5rem;'>
+                            {UI.esc(source_badge)}
+                        </span>
+                        <span style='background: #111827; color: white; padding: 0.25rem 0.5rem;
+                                    border-radius: 4px; font-size: 0.7rem; margin-left: 0.5rem;'>
+                            {UI.esc(action.get('tag',''))}
+                        </span>
+                    </div>
+                    <div class='action-why'><strong>Why:</strong> {UI.esc(action.get('why',''))}</div>
+                    <div class='action-impact'>💰 Impact: {UI.esc(action.get('impact',''))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            
+    st.markdown("---")
+        
     # 8 Core metrics (keep your existing logic, just using UI.metric_card)
     st.subheader("📊 Key Metrics (Last 90 days)")
 
     has_no_orders = U.safe_get(dealer, "has_no_orders", 0)
     last_90d_rev = U.safe_get(dealer, "total_revenue_last_90d", 0)
-    prev_90d_rev = U.safe_get(dealer, "total_revenue_prev_90d", 0)
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -454,64 +509,9 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
 
     # ---- RESTORE: Tabs + AI nudges block (was in your older version) ----
     st.markdown("---")
-    tab1, tab2, tab3 = st.tabs(["💡 Smart Actions", "📊 Details", "ℹ️ How to Use"])
+    tab1, tab2 = st.tabs(["📊 Details", "ℹ️ How to Use"])
 
     with tab1:
-        st.subheader("🎯 Dealer Action Plan (Rule + AI)")
-
-        # 1) Always compute rule nudges immediately (2 items)
-        rule_nudges = N.generate_rule_nudges(dealer)  # already returns normalized-ish dicts
-        dealer_key = U.safe_get(dealer, "dealer_composite_id", None) or dealer_id
-
-        # 2) Pull cached AI nudges (if already generated for this dealer)
-        ai_cache = _get_ai_actions_cache()
-        ai_nudges = ai_cache.get(dealer_key, [])
-
-        # 3) Button generates AI nudges on-demand (3 items)
-        cbtn1, cbtn2 = st.columns([1, 3], vertical_alignment="center")
-        with cbtn1:
-            if st.button("🤖 Generate AI Nudges", key=f"btn_ai_actions_{dealer_key}"):
-                with st.spinner("Analyzing dealer patterns..."):
-                    ai_cache[dealer_key] = N.generate_ai_nudges(dealer)  # returns list[dict]
-                st.rerun()
-
-        with cbtn2:
-            # st.caption("AI nudges generated for this dealer (cached for this session).")
-            pass
-
-        # 4) Combine into ONE output format: first 2 rule + next 3 AI
-        combined_actions = N.combine_rule_and_ai_actions(rule_nudges, ai_nudges, max_rule=2, max_ai=3)
-
-        if not combined_actions:
-            st.info("No actions available for this dealer.")
-        else:
-            for i, action in enumerate(combined_actions, 1):
-                # color by source
-                tag_color = "#48bb78" if action.get("source") == "RULE" else "#667eea"
-                source_badge = action.get("source", "")
-
-                st.markdown(
-                    f"""
-                    <div class='action-card' style='border-left-color: {tag_color};'>
-                        <div class='action-title'>
-                            Action {i}: {UI.esc(action.get('do',''))}
-                            <span style='background: {tag_color}; color: white; padding: 0.25rem 0.5rem;
-                                        border-radius: 4px; font-size: 0.7rem; margin-left: 0.5rem;'>
-                                {UI.esc(source_badge)}
-                            </span>
-                            <span style='background: #111827; color: white; padding: 0.25rem 0.5rem;
-                                        border-radius: 4px; font-size: 0.7rem; margin-left: 0.5rem;'>
-                                {UI.esc(action.get('tag',''))}
-                            </span>
-                        </div>
-                        <div class='action-why'><strong>Why:</strong> {UI.esc(action.get('why',''))}</div>
-                        <div class='action-impact'>💰 Impact: {UI.esc(action.get('impact',''))}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            
-    with tab2:
         st.subheader("Additional Details")
 
         c1, c2 = st.columns(2)
@@ -548,7 +548,7 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
             missing_cats, low_share_cats = D.get_product_gaps(dealer)
             UI.render_product_gaps(missing_cats, low_share_cats)
 
-    with tab3:
+    with tab2:
         st.markdown(UI.HOW_TO_USE_MD)
 
 def render_quick_nav_sidebar() -> None:

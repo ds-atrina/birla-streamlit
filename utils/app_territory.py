@@ -39,7 +39,7 @@ def calculate_territory_health(territory_df: pd.DataFrame) -> dict:
         'total_revenue_90d': total_revenue_90d,
         'prev_revenue_90d': prev_revenue_90d,
         'revenue_trend_pct': revenue_trend,
-        'active_rate': (active_dealers / total_dealers)*100 if total_dealers > 0 else 0,
+        'active_rate': (active_dealers / total_dealers) * 100 if total_dealers > 0 else 0,
     }
 
 def calculate_territory_collections(territory_df: pd.DataFrame) -> dict:
@@ -77,20 +77,21 @@ def generate_combined_call_list(territory_df: pd.DataFrame, top_n: int = 50) -> 
     """Generate single unified action list (sales + collections) with sub-scores for filtering/sorting."""
 
     df = territory_df.copy()
+    
     def _series(col: str) -> pd.Series:
         if col in df.columns:
             return pd.to_numeric(df[col], errors="coerce").fillna(0)
         return pd.Series(0, index=df.index, dtype="float")
 
     due_today = _series("due_today_total")
-    overdue   = _series("overdue_amt_total")
-    due_tom   = _series("due_tomorrow_total")
-    due_in7   = _series("due_in7_total")
+    overdue = _series("overdue_amt_total")
+    due_tom = _series("due_tomorrow_total")
+    due_in7 = _series("due_in7_total")
 
-    dsl   = _series("days_since_last_order")
+    dsl = _series("days_since_last_order")
     churn = _series("order_churn_risk_score")
     trend = _series("pct_revenue_trend_90d")
-    gap   = _series("revenue_gap_vs_cluster_avg_monthly_last_90d")
+    gap = _series("revenue_gap_vs_cluster_avg_monthly_last_90d")
 
     # Sub-scores
     df['collections_score'] = 0.0

@@ -35,7 +35,7 @@ def is_nan(x) -> bool:
     """Check if value is NaN"""
     try:
         return isinstance(x, float) and math.isnan(x)
-    except:
+    except Exception:
         return False
     
 def safe_get(d, k, default=0):

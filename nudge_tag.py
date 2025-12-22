@@ -670,12 +670,3 @@ def get_strength_for_tag(tag: str) -> float:
     if len(row) > 0:
         return row.iloc[0]['strength_score']
     return 0.0
-# # ==================== UTILITY ====================
-
-# def get_strength_for_tag(tag: str) -> float:
-#     """Get current strength score for a tag"""
-#     tag_perf = load_tag_performance()
-#     row = tag_perf[tag_perf['tag'] == tag]
-#     if len(row) > 0:
-#         return row.iloc[0]['strength_score']
-#     return 0.0

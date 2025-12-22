@@ -83,16 +83,16 @@ def create_order_frequency_benchmark(dealer):
 
 def create_subbrand_mix_chart(dealer):
     subbrands = {
-        "Allwood":      U.safe_get(dealer, "share_revenue_allwood_180d", 0.0),
-        "Prime":        U.safe_get(dealer, "share_revenue_prime_180d", 0.0),
-        "Allwood Pro":  U.safe_get(dealer, "share_revenue_allwoodpro_180d", 0.0),
-        "One":          U.safe_get(dealer, "share_revenue_one_180d", 0.0),
-        "Calista":      U.safe_get(dealer, "share_revenue_calista_180d", 0.0),
-        "Style":        U.safe_get(dealer, "share_revenue_style_180d", 0.0),
-        "AllDry":       U.safe_get(dealer, "share_revenue_alldry_180d", 0.0),
-        "Artist":       U.safe_get(dealer, "share_revenue_artist_180d", 0.0),
-        "Sample Kit":   U.safe_get(dealer, "share_revenue_samplekit_180d", 0.0),
-        "Collaterals":  U.safe_get(dealer, "share_revenue_collaterals_180d", 0.0),
+        "Allwood": U.safe_get(dealer, "share_revenue_allwood_180d", 0.0),
+        "Prime": U.safe_get(dealer, "share_revenue_prime_180d", 0.0),
+        "Allwood Pro": U.safe_get(dealer, "share_revenue_allwoodpro_180d", 0.0),
+        "One": U.safe_get(dealer, "share_revenue_one_180d", 0.0),
+        "Calista": U.safe_get(dealer, "share_revenue_calista_180d", 0.0),
+        "Style": U.safe_get(dealer, "share_revenue_style_180d", 0.0),
+        "AllDry": U.safe_get(dealer, "share_revenue_alldry_180d", 0.0),
+        "Artist": U.safe_get(dealer, "share_revenue_artist_180d", 0.0),
+        "Sample Kit": U.safe_get(dealer, "share_revenue_samplekit_180d", 0.0),
+        "Collaterals": U.safe_get(dealer, "share_revenue_collaterals_180d", 0.0),
     }
     subbrands = {k: v for k, v in subbrands.items() if v and v > 0}
     if not subbrands:
