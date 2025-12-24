@@ -44,11 +44,17 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------
 # Small helpers
 # --------------------------------------------------------------------------------------
+def _nice_round(v: float) -> float:
+    if v <= 0:
+        return 0.0
+    magnitude = 10 ** (len(str(int(v))) - 1)
+    return round(v / magnitude) * magnitude
+
 def _impact_range(v: float) -> str:
     v = U.to_float(v or 0.0, 0.0)
+    v = _nice_round(v)
     lo, hi = 0.8 * v, 1.2 * v
     return f"~₹{lo:,.0f}-₹{hi:,.0f}"
-
 
 def _extract_json_object(text: str) -> Optional[str]:
     """
@@ -233,7 +239,6 @@ def get_subbrand_nudges(dealer: dict, enabled: bool = True) -> List[dict]:
         })
 
     return actions
-
 
 # --------------------------------------------------------------------------------------
 # RULE: Collections nudges (Overdue ALWAYS first if > 0)
@@ -720,18 +725,18 @@ OUTPUT JSON (STRICT)
     return summary_block + "\n" + product_block + "\n" + instructions
 
 
-def _redact_dealer_for_llm(dealer: dict) -> dict:
-    """Return a shallow copy of dealer with PII redacted before sending to LLM.
-    Removes customer_name, city/state, asm_name and dealer ids; keeps numeric signals."""
-    if not isinstance(dealer, dict):
-        return dealer
-    d = copy.deepcopy(dealer)
-    for k in [
-        'customer_name', 'city_name', 'state_name', 'asm_name', 'dealer_composite_id', 'dealer_id', 'first_order_date', 'last_order_date'
-    ]:
-        if k in d:
-            d[k] = 'REDACTED'
-    return d
+# def _redact_dealer_for_llm(dealer: dict) -> dict:
+#     """Return a shallow copy of dealer with PII redacted before sending to LLM.
+#     Removes customer_name, city/state, asm_name and dealer ids; keeps numeric signals."""
+#     if not isinstance(dealer, dict):
+#         return dealer
+#     d = copy.deepcopy(dealer)
+#     for k in [
+#         'customer_name', 'city_name', 'state_name', 'asm_name', 'dealer_composite_id', 'dealer_id', 'first_order_date', 'last_order_date'
+#     ]:
+#         if k in d:
+#             d[k] = 'REDACTED'
+#     return d
 
 
 def generate_ai_nudges(dealer: dict, model=None) -> List[dict]:
@@ -739,8 +744,8 @@ def generate_ai_nudges(dealer: dict, model=None) -> List[dict]:
     Generates LLM nudges. If LLM fails, returns fallback actions (but normalized & tagged).
     """
     # Redact PII before building context sent to the LLM
-    redacted = _redact_dealer_for_llm(dealer)
-    context = get_context(redacted)
+    # redacted = _redact_dealer_for_llm(dealer)
+    context = get_context(dealer)
 
     try:
         if ChatGoogleGenerativeAI is None:
@@ -928,22 +933,30 @@ def fallback_actions(dealer: dict) -> List[dict]:
 # Combine: RULE first immediately, then AI appended; AI wins on overlap (except collections)
 # --------------------------------------------------------------------------------------
 def _normalize_action(a: dict, source: str) -> dict:
-    do = a.get("do") or a.get("text") or ""
-    return {
-        "source": source,  # RULE or LLM
-        "do": do,
-        "why": a.get("why", ""),
-        "impact": a.get("impact", ""),
+    """Ensure both RULE + AI actions share the same schema used by app.py."""
+    if a is None:
+        a = {}
 
-        "tag": a.get("tag"),
-        "tag_family": a.get("tag_family"),
-        "priority_base": a.get("priority_base"),
-        "strength_score": a.get("strength_score"),
+    # Common fallbacks if older rule nudges used different keys
+    do = a.get("do") or a.get("action") or a.get("text") or ""
+    why = a.get("why") or a.get("reason") or a.get("context") or ""
+    impact = a.get("impact") or a.get("expected_impact") or ""
+    tag = a.get("tag") or a.get("tag_id") or a.get("nudge_tag") or ""
 
-        "llm_primary_tag": a.get("llm_primary_tag"),
-        "llm_tag_confidence": a.get("llm_tag_confidence"),
-        "llm_tag_basis": a.get("llm_tag_basis"),
+    out = {
+        "do": str(do).strip(),
+        "why": str(why).strip(),
+        "impact": str(impact).strip(),
+        "tag": str(tag).strip(),
+        "source": source,
     }
+
+    # Preserve useful scoring fields if present
+    for k in ["final_score", "priority", "strength_score", "confidence", "lift"]:
+        if k in a:
+            out[k] = a[k]
+
+    return out
 
 
 def _theme_from_action(a: dict) -> str:
@@ -991,37 +1004,28 @@ def _theme_from_action(a: dict) -> str:
 
     return "GENERAL"
 
-
 def combine_rule_and_ai_actions(
     rule_actions: List[dict],
     ai_actions: List[dict],
     max_rule: int = 2,
     max_ai: int = 3,
 ) -> List[dict]:
-    """
-    Output: unified list for UI.
-
-    Behavior:
-    - Rule actions are shown immediately (up to max_rule) + collections overdue forced first.
-    - When AI actions are added, AI wins on overlap themes (rule dropped for that theme),
-      BUT collections/overdue rule is never dropped.
-    """
     rule_actions = rule_actions or []
     ai_actions = ai_actions or []
 
-    # Normalize with caps (but keep overdue if present)
+    # Normalize + cap
     rule_norm_all = [_normalize_action(a, "RULE") for a in rule_actions]
-    ai_norm = [_normalize_action(a, "LLM") for a in ai_actions[:max_ai]]
+    ai_norm = [_normalize_action(a, "AI") for a in ai_actions[:max_ai]]  # use "AI" not "LLM"
 
-    # Always preserve overdue-first if present (it will already be high priority, but enforce)
+    # Force overdue first if present (doesn't count against max_rule)
     overdue_rule = None
     for ra in rule_norm_all:
         if ra.get("tag") and "OVERDUE" in str(ra.get("tag")):
             overdue_rule = ra
             break
 
-    # Apply rule cap excluding overdue slot
-    rule_norm_capped: List[dict] = []
+    # Take top rule actions (excluding overdue slot)
+    rule_norm_capped = []
     for ra in rule_norm_all:
         if overdue_rule and ra is overdue_rule:
             continue
@@ -1029,54 +1033,30 @@ def combine_rule_and_ai_actions(
         if len(rule_norm_capped) >= max_rule:
             break
 
-    rule_norm = ([overdue_rule] if overdue_rule else []) + rule_norm_capped
+    combined = []
+    seen = set()
 
-    # Build AI theme set (AI wins for these themes)
-    ai_themes = {_theme_from_action(a) for a in ai_norm}
-
-    # Filter RULE: if AI covers same theme, drop rule (except PAYMENTS/overdue)
-    filtered_rule: List[dict] = []
-    for ra in rule_norm:
-        theme = _theme_from_action(ra)
-        is_payments = theme == "PAYMENTS"
-        if is_payments:
-            filtered_rule.append(ra)
-            continue
-        if theme in ai_themes:
-            continue
-        filtered_rule.append(ra)
-
-    # Now combine with de-dupe
-    combined: List[dict] = []
-    seen: set = set()
-
-    # Overdue must be first if exists
+    # Overdue first
     if overdue_rule:
         k = (overdue_rule.get("tag"), overdue_rule.get("do"))
         if k not in seen:
             seen.add(k)
             combined.append(overdue_rule)
 
-    # Remaining rule
-    for ra in filtered_rule:
-        if overdue_rule and ra is overdue_rule:
-            continue
+    # Then rules
+    for ra in rule_norm_capped:
         k = (ra.get("tag"), ra.get("do"))
         if k in seen:
             continue
         seen.add(k)
         combined.append(ra)
 
-    # AI appended
+    # Then AI appended
     for aa in ai_norm:
         k = (aa.get("tag"), aa.get("do"))
         if k in seen:
             continue
         seen.add(k)
         combined.append(aa)
-
-    # Ensure overdue stays first no matter what
-    if combined and overdue_rule:
-        combined = [overdue_rule] + [x for x in combined if x is not overdue_rule]
 
     return combined
