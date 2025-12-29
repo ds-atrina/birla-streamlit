@@ -59,7 +59,7 @@ def inject_css() -> None:
       letter-spacing: 0.5px;
       margin-bottom: 0.5rem;
   }
-  .metric-value { font-size: 2rem; font-weight: 800; margin: 0.5rem 0; }
+  .metric-value { font-size: 2rem; color: #000000; font-weight: 800; margin: 0.5rem 0; }
   .metric-plain { font-size: 1.1rem; color: #4a5568; margin-top: 0.5rem; font-weight: 500; }
 
   .nba-card {

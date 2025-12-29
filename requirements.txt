@@ -6,3 +6,5 @@ pytest
 jsonschema
 flake8
 mypy
+uvicorn
+fastapi

@@ -73,22 +73,6 @@ def _on_dealer_change_direct():
     if d:
         S.AppState.navigate_to_dealer(d)
 
-def render_ai_status_sidebar():
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🤖 AI Status")
-
-    # Key presence (don’t print key)
-    has_key = bool(os.getenv("GOOGLE_API_KEY"))
-    st.sidebar.write("GOOGLE_API_KEY:", "✅ Found" if has_key else "❌ Missing")
-
-    # LangChain Gemini import availability (exposed via utils/app_nudges.py)
-    has_llm = getattr(N, "ChatGoogleGenerativeAI", None) is not None
-    st.sidebar.write("Gemini client:", "✅ Available" if has_llm else "❌ Not installed/import failed")
-
-    if not has_key:
-        st.sidebar.info("Set GOOGLE_API_KEY in your environment before AI nudges will work.")
-
-
 def render_dealer_charts_section(dealer: dict) -> None:
     """Charts in ONE ROW (like before)."""
     has_no_orders = U.safe_get(dealer, "has_no_orders", 0)
@@ -301,21 +285,11 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
     rule_nudges = N.generate_rule_nudges(dealer)  # already returns normalized-ish dicts
     dealer_key = U.safe_get(dealer, "dealer_composite_id", None) or dealer_id
 
-    # 2) Pull cached AI nudges (if already generated for this dealer)
+    # 2) Auto-generate AI nudges (cached per dealer so reruns are cheap)
     ai_cache = _get_ai_actions_cache()
-    ai_nudges = ai_cache.get(dealer_key, [])
-
-    # 3) Button generates AI nudges on-demand (3 items)
-    cbtn1, cbtn2 = st.columns([1, 3], vertical_alignment="center")
-    with cbtn1:
-        if st.button("🤖 Generate AI Nudges", key=f"btn_ai_actions_{dealer_key}"):
-            with st.spinner("Analyzing dealer patterns..."):
-                ai_cache[dealer_key] = N.generate_ai_nudges(dealer)  # returns list[dict]
-            st.rerun()
-
-    with cbtn2:
-        # st.caption("AI nudges generated for this dealer (cached for this session).")
-        pass
+    if dealer_key not in ai_cache:
+        ai_cache[dealer_key] = N.generate_ai_nudges(dealer)  # deterministic, fast
+    ai_nudges = ai_cache[dealer_key]
 
     # 4) Combine into ONE output format: first 2 rule + next 3 AI
     combined_actions = N.combine_rule_and_ai_actions(rule_nudges, ai_nudges, max_rule=2, max_ai=3)
@@ -324,19 +298,12 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
         st.info("No actions available for this dealer.")
     else:
         for i, action in enumerate(combined_actions, 1):
-            # color by source
-            tag_color = "#48bb78" if action.get("source") == "RULE" else "#667eea"
-            source_badge = action.get("source", "")
 
             st.markdown(
                 f"""
-                <div class='action-card' style='border-left-color: {tag_color};'>
+                <div class='action-card'>
                     <div class='action-title'>
                         Action {i}: {UI.esc(action.get('do',''))}
-                        <span style='background: {tag_color}; color: white; padding: 0.25rem 0.5rem;
-                                    border-radius: 4px; font-size: 0.7rem; margin-left: 0.5rem;'>
-                            {UI.esc(source_badge)}
-                        </span>
                         <span style='background: #111827; color: white; padding: 0.25rem 0.5rem;
                                     border-radius: 4px; font-size: 0.7rem; margin-left: 0.5rem;'>
                             {UI.esc(action.get('tag',''))}
@@ -637,7 +604,6 @@ def main() -> None:
                 if st.button("View Dealer Dashboard", key="btn_view_dealer"):
                     S.AppState.navigate_to_dealer(selected_dealer)
                     st.rerun()
-        # render_ai_status_sidebar()
         render_quick_nav_sidebar()
 
     # Main routing
