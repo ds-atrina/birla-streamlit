@@ -273,4 +273,3 @@ def generate_combined_call_list(territory_df: pd.DataFrame, top_n: int = 50) -> 
     df = df.sort_values("call_score", ascending=False).head(top_n)
 
     return df
-

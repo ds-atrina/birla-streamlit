@@ -34,4 +34,6 @@ venv/
 __pycache__/
 data/
 
+# API development
 backend/
+tests/test_api_contracts.py

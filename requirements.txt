@@ -8,3 +8,5 @@ flake8
 mypy
 uvicorn
 fastapi
+types-cachetools
+types-requests

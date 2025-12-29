@@ -15,10 +15,7 @@ from utils import app_utils as U
 # ----------------------------
 def _dealer_key(dealer: dict) -> str:
     return str(
-        (dealer or {}).get("dealer_composite_id")
-        or (dealer or {}).get("dealer_id")
-        or (dealer or {}).get("customer_name")
-        or "unknown"
+        (dealer or {}).get("dealer_composite_id") or (dealer or {}).get("dealer_id") or (dealer or {}).get("customer_name") or "unknown"
     )
 
 def _pick_variant(dealer: dict, nudge_key: str, variants: List[str]) -> str:
@@ -622,7 +619,7 @@ def generate_rule_nudges(dealer: dict, max_actions: int = 2) -> List[dict]:
             "llm_primary_tag": "",
             "llm_tag_confidence": conf,
             "llm_tag_basis": "rule_engine",
-            "source": "RULE",
+            "source": "rule",
         })
 
     return out
@@ -660,7 +657,7 @@ def _build_dormant_general(dealer: dict) -> dict:
     impact = f"{_impact_range(basis)} this month (basis typical_invoice)"
     tag_basis = f"dormant_override; basis={'typical_invoice' if tiv > 0 else 'baseline_monthly'}"
 
-    return _tagged_action("LLM_GENERAL", do, why, impact, 0.82, tag_basis, "AI")
+    return _tagged_action("LLM_GENERAL", do, why, impact, 0.82, tag_basis, "ai")
 
 def _build_repurchase_bundle(dealer: dict, used_themes: set) -> Optional[Tuple[dict, set]]:
     repurchase = _ensure_list(dealer.get("llm_repurchase_recommendations"))
@@ -702,7 +699,7 @@ def _build_repurchase_bundle(dealer: dict, used_themes: set) -> Optional[Tuple[d
     impact = f"{_impact_range(basis)} this month (basis repurchase_bundle)"
     tag_basis = f"basis={'sum_typical_order_value' if tov_sum > 0 else 'typical_invoice'}"
 
-    a = _tagged_action("LLM_REPURCHASE_DUE", do, why, impact, 0.86, tag_basis, "AI")
+    a = _tagged_action("LLM_REPURCHASE_DUE", do, why, impact, 0.86, tag_basis, "ai")
     return a, (used_themes | rep_themes)
 
 def _build_defend_share(dealer: dict, used_themes: set) -> Optional[Tuple[dict, set]]:
@@ -746,7 +743,7 @@ def _build_defend_share(dealer: dict, used_themes: set) -> Optional[Tuple[dict, 
     impact = f"{_impact_range(basis)} this month (basis defend_share)"
     tag_basis = f"{basis_field}; defend_share"
 
-    a = _tagged_action("LLM_TERRITORY_HERO", do, why, impact, 0.80, tag_basis, "AI")
+    a = _tagged_action("LLM_TERRITORY_HERO", do, why, impact, 0.80, tag_basis, "ai")
     new_used = set(used_themes)
     if theme:
         new_used.add(theme)
@@ -789,7 +786,7 @@ def _build_inactive_category(dealer: dict, used_themes: set, blocked_themes: set
         impact = f"{_impact_range(basis)} this month (basis inactive_category)"
         tag_basis = f"peer_mo={peer:.0f}; past_mo={past:.0f}"
 
-        a = _tagged_action("LLM_INACTIVE_CATEGORY", do, why, impact, 0.78, tag_basis, "AI")
+        a = _tagged_action("LLM_INACTIVE_CATEGORY", do, why, impact, 0.78, tag_basis, "ai")
         new_used = set(used_themes)
         new_used.add(theme)
         return a, new_used
@@ -842,7 +839,7 @@ def _build_cross_sell(dealer: dict, used_themes: set, blocked_themes: set) -> Op
     impact = f"{_impact_range(basis)} this month (basis trial_addon)"
     tag_basis = f"peers={peers0:.0f}; bench={bench0:.0f}"
 
-    a = _tagged_action("LLM_CROSS_SELL", do, why, impact, 0.72, tag_basis, "AI")
+    a = _tagged_action("LLM_CROSS_SELL", do, why, impact, 0.72, tag_basis, "ai")
     new_used = set(used_themes)
     new_used |= picked_themes
     return a, new_used
@@ -883,7 +880,7 @@ def _build_territory_hero_expand(dealer: dict, used_themes: set, blocked_themes:
         impact = f"{_impact_range(basis)} this month (basis territory_hero)"
         tag_basis = f"bench={bench:.0f}"
 
-        a = _tagged_action("LLM_TERRITORY_HERO", do, why, impact, 0.74, tag_basis, "AI")
+        a = _tagged_action("LLM_TERRITORY_HERO", do, why, impact, 0.74, tag_basis, "ai")
         new_used = set(used_themes)
         if theme:
             new_used.add(theme)
@@ -1012,8 +1009,8 @@ def combine_rule_and_ai_actions(
     rule_actions = rule_actions or []
     ai_actions = ai_actions or []
 
-    rule_norm_all = [_normalize_action(a, "RULE") for a in rule_actions]
-    ai_norm = [_normalize_action(a, "AI") for a in ai_actions[:max_ai]]
+    rule_norm_all = [_normalize_action(a, "rule") for a in rule_actions]
+    ai_norm = [_normalize_action(a, "ai") for a in ai_actions[:max_ai]]
 
     # find overdue rule (keep first, doesn’t count against max_rule)
     overdue_rule = None
