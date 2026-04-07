@@ -1,5 +1,6 @@
 import pandas as pd
 import nudge_tag as nt
+from utils import app_new_nudges as ann
 from utils import app_nudges as an
 
 
@@ -41,7 +42,7 @@ def test_combine_sorts_by_impact_but_overdue_first():
         {"do": "AI mid", "impact": "~₹50-₹60", "tag": "LLM_TERRITORY_HERO"},
     ]
 
-    combined = an.combine_rule_and_ai_actions(rule_actions, ai_actions, max_rule=2, max_ai=3)
+    combined = an.combine_actions(rule_actions, ai_actions, max_nudges=10)
     assert combined[0]["tag"] == "OVERDUE_HIGH_AMOUNT"
 
     # Rest should be sorted by impact desc
@@ -50,22 +51,27 @@ def test_combine_sorts_by_impact_but_overdue_first():
     assert scores == sorted(scores, reverse=True)
 
 
-def test_generate_ai_nudges_dormant_override_returns_one_general():
+def test_product_rec_nudges_as_actions_empty_snapshot_returns_empty():
+    """LLM snapshot lists empty → no product-rec action cards (legacy generate_ai_nudges removed)."""
     dealer = {
         "dealer_id": "D1",
-        "total_orders_last_90d": 0,   # dormant trigger
+        "total_orders_last_90d": 0,
         "days_since_last_order": 200,
         "flag_zero_activity_90d": 1,
-        # candidates can be empty; should still return 1 action
         "llm_repurchase_recommendations": [],
         "llm_territory_top_products_90d": [],
+        "llm_dealer_top_products_90d": [],
+        "llm_territory_products_in_dealer_categories": [],
+        "llm_asm_products_in_dealer_categories": [],
+        "llm_asm_top_products_90d": [],
+        "llm_territory_new_categories_reco_90d": [],
+        "llm_asm_new_categories_reco_90d": [],
     }
-    acts = an.generate_ai_nudges(dealer)
-    assert len(acts) == 1
-    assert acts[0]["tag"] == "LLM_GENERAL"
+    acts = ann.generate_product_rec_nudges_as_actions(dealer)
+    assert acts == []
 
 
-def test_generate_ai_nudges_non_dormant_max_three():
+def test_product_rec_nudges_as_actions_nonempty_emits_prodrec_tags():
     dealer = {
         "dealer_id": "D1",
         "total_orders_last_90d": 5,
@@ -90,11 +96,21 @@ def test_generate_ai_nudges_non_dormant_max_three():
         "llm_dealer_top_products_90d": [
             {"product": "Top Coat", "category": "Emulsion", "sub_category": "Interior", "avg_monthly_sales": 60000}
         ],
+        "llm_asm_products_in_dealer_categories": [],
+        "llm_asm_top_products_90d": [],
+        "llm_territory_new_categories_reco_90d": [],
+        "llm_asm_new_categories_reco_90d": [],
     }
-    acts = an.generate_ai_nudges(dealer)
-    assert 1 <= len(acts) <= 3
+    acts = ann.generate_product_rec_nudges_as_actions(dealer)
+    assert len(acts) >= 1
+    prodrec_tags = {
+        "PRODREC_DEALER_MOST_ORDERED",
+        "PRODREC_DEALER_REPURCHASE",
+        "PRODREC_TERRITORY",
+        "PRODREC_AREA",
+    }
     for a in acts:
-        assert a["tag"] in {"LLM_REPURCHASE_DUE", "LLM_INACTIVE_CATEGORY", "LLM_CROSS_SELL", "LLM_TERRITORY_HERO", "LLM_GENERAL"}
+        assert a["tag"] in prodrec_tags
 
 
 # ----------------------------
