@@ -163,6 +163,57 @@ def inject_css() -> None:
 
   /* Compact segmented control */
   div[data-testid="stSegmentedControl"] label p { margin-bottom: 0.25rem !important; }
+  
+  .reco-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.75rem;
+  }
+  .reco-card {
+    background: #0b1220;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-left-width: 6px;
+    border-radius: 14px;
+    padding: 0.75rem 0.85rem;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+  }
+  .reco-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #f8fafc;
+    line-height: 1.2;
+  }
+  .reco-meta {
+    margin-top: 0.35rem;
+    font-size: 0.78rem;
+    color: rgba(248,250,252,0.70);
+    line-height: 1.35;
+  }
+  .reco-badge {
+    display: inline-block;
+    font-size: 0.70rem;
+    font-weight: 700;
+    padding: 0.18rem 0.5rem;
+    border-radius: 999px;
+    margin-left: 0.45rem;
+    vertical-align: middle;
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+  .reco-badge-high { background: rgba(220,38,38,0.18); color: #fecaca; }
+  .reco-badge-moderate { background: rgba(245,158,11,0.18); color: #fde68a; }
+  .reco-badge-low { background: rgba(34,197,94,0.14); color: #bbf7d0; }
+  
+  .reco-border-high { border-left-color: #dc2626; }
+  .reco-border-moderate { border-left-color: #f59e0b; }
+  .reco-border-low { border-left-color: #22c55e; }
+  .reco-border-none { border-left-color: #64748b; }
+  
+  @media (max-width: 1100px) {
+    .reco-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 700px) {
+    .reco-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+  }
 </style>
 """, unsafe_allow_html=True)
 

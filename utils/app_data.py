@@ -8,6 +8,7 @@ from typing import Any, List
 import pandas as pd
 import streamlit as st
 
+from utils import app_utils as U
 
 NUMERIC_COLS = [
     "total_revenue_last_90d", "total_revenue_prev_90d", "total_revenue_lifetime",
@@ -69,7 +70,7 @@ def coerce_dealer_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+# @st.cache_data(ttl=3600, show_spinner=False)
 def _load_dealer_df_from_path(path: str) -> pd.DataFrame:
     """Cached only for file paths (stable hash)."""
     df = pd.read_csv(path)
@@ -148,12 +149,12 @@ def _num(x) -> float:
 
 
 def get_dealer_collections_numbers(dealer: dict) -> dict:
-    overdue = _num(dealer.get("overdue_amt_total", 0))
-    os_total = _num(dealer.get("os_amt_total", 0))
-    due_today = _num(dealer.get("due_today_total", 0))
-    due_today_only = _num(dealer.get("due_today_only_total"))
-    due_tomorrow = _num(dealer.get("due_tomorrow_total", 0))
-    due_in7 = _num(dealer.get("due_in7_total", 0))
+    overdue = _num(U.safe_get(dealer, "overdue_amt_total", 0))
+    os_total = _num(U.safe_get(dealer, "os_amt_total", 0))
+    due_today = _num(U.safe_get(dealer, "due_today_total", 0))
+    due_today_only = _num(U.safe_get(dealer, "due_today_only_total", 0))
+    due_tomorrow = _num(U.safe_get(dealer, "due_tomorrow_total", 0))
+    due_in7 = _num(U.safe_get(dealer, "due_in7_total", 0))
 
     show = (overdue > 0) or (os_total > 0) or (due_today > 0) or (due_today_only > 0) or (due_tomorrow > 0) or (due_in7 > 0)
 

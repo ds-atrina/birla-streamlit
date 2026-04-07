@@ -87,7 +87,7 @@ def get_product_gaps(dealer: dict):
 
     missing = []
     low_share = []
-    threshold_low = 0.05
+    threshold_low = 5
 
     for label, col in category_cols:
         if col not in dealer:
@@ -99,7 +99,7 @@ def get_product_gaps(dealer: dict):
             share_val = U.to_float(share)
         except Exception:
             continue
-        if share_val <= 0.0001:
+        if share_val <= 0.01:
             missing.append(label)
         elif share_val < threshold_low:
             low_share.append((label, share_val))

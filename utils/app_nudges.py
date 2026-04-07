@@ -126,11 +126,11 @@ def _sum_numeric(items: List[dict], key: str) -> float:
 # ----------------------------
 def _why_from_tag(dealer: dict, tag: str) -> str:
     # collections context
-    overdue = U.to_float(dealer.get("overdue_amt_total", 0), 0.0)
-    due_today = U.to_float(dealer.get("due_today_total", 0), 0.0)
-    due_tom = U.to_float(dealer.get("due_tomorrow_total", 0), 0.0)
-    due_in7 = U.to_float(dealer.get("due_in7_total", 0), 0.0)
-    os_amt = U.to_float(dealer.get("os_amt_total", 0), 0.0)
+    overdue = U.to_float(U.safe_get(dealer, "overdue_amt_total", 0), 0.0)
+    due_today = U.to_float(U.safe_get(dealer, "due_today_total", 0), 0.0)
+    due_tom = U.to_float(U.safe_get(dealer, "due_tomorrow_total", 0), 0.0)
+    due_in7 = U.to_float(U.safe_get(dealer, "due_in7_total", 0), 0.0)
+    os_amt = U.to_float(U.safe_get(dealer, "os_amt_total", 0), 0.0)
 
     if tag == "OVERDUE_HIGH_AMOUNT":
         return f"Overdue pending: {U.fmt_rs(overdue)}. Need commitment + closure."
@@ -144,9 +144,9 @@ def _why_from_tag(dealer: dict, tag: str) -> str:
         return f"High outstanding: {U.fmt_rs(os_amt)}. Keep payment cadence healthy."
 
     # sales context
-    dsl = U.to_int(dealer.get("days_since_last_order") or 0, 0)
-    churn = U.to_float(dealer.get("order_churn_risk_score") or 0, 0.0)
-    trend = U.to_float(dealer.get("pct_revenue_trend_90d") or 0, 0.0)
+    dsl = U.to_int(U.safe_get(dealer, "days_since_last_order") or 0, 0)
+    churn = U.to_float(U.safe_get(dealer, "order_churn_risk_score") or 0, 0.0)
+    trend = U.to_float(U.safe_get(dealer, "pct_revenue_trend_90d") or 0, 0.0)
 
     if tag == "CHURN_RISK_INACTIVE_90D":
         return f"Dealer inactive for {dsl} days; high churn risk."
@@ -161,11 +161,11 @@ def _why_from_tag(dealer: dict, tag: str) -> str:
 
 def _estimate_rule_impact(dealer: dict, tag: str) -> str:
     # Collections-based tags: impact should reflect real due amounts
-    overdue = U.to_float(dealer.get("overdue_amt_total", 0), 0.0)
-    due_today = U.to_float(dealer.get("due_today_total", 0), 0.0)
-    due_tom = U.to_float(dealer.get("due_tomorrow_total", 0), 0.0)
-    due_in7 = U.to_float(dealer.get("due_in7_total", 0), 0.0)
-    os_amt = U.to_float(dealer.get("os_amt_total", 0), 0.0)
+    overdue = U.to_float(U.safe_get(dealer, "overdue_amt_total", 0), 0.0)
+    due_today = U.to_float(U.safe_get(dealer, "due_today_total", 0), 0.0)
+    due_tom = U.to_float(U.safe_get(dealer, "due_tomorrow_total", 0), 0.0)
+    due_in7 = U.to_float(U.safe_get(dealer, "due_in7_total", 0), 0.0)
+    os_amt = U.to_float(U.safe_get(dealer, "os_amt_total", 0), 0.0)
 
     if tag == "OVERDUE_HIGH_AMOUNT" and overdue > 0:
         return f"{_impact_range(overdue)} this month (basis overdue_amt)"
@@ -179,9 +179,9 @@ def _estimate_rule_impact(dealer: dict, tag: str) -> str:
         return f"{_impact_range(os_amt)} this month (basis outstanding)"
 
     # Sales impacts (same logic you had)
-    tiv = U.to_float(dealer.get("avg_invoice_value_90d") or dealer.get("typical_invoice_size") or 0, 0.0)
-    monthly_rev = U.to_float(dealer.get("total_revenue_last_90d") or 0, 0.0) / 3.0
-    gap_to_cluster = U.to_float(dealer.get("revenue_gap_vs_cluster_avg_monthly_last_90d") or 0, 0.0)
+    tiv = U.to_float(U.safe_get(dealer, "avg_invoice_value_90d") or U.safe_get(dealer, "typical_invoice_size") or 0, 0.0)
+    monthly_rev = U.to_float(U.safe_get(dealer, "total_revenue_last_90d") or 0, 0.0) / 3.0
+    gap_to_cluster = U.to_float(U.safe_get(dealer, "revenue_gap_vs_cluster_avg_monthly_last_90d") or 0, 0.0)
 
     if tag in {"CHURN_RISK_INACTIVE_90D", "CHURN_RISK_HIGH_SCORE", "NEW_DEALER_NO_ORDERS"}:
         basis = tiv if tiv > 0 else max(5000.0, 0.2 * monthly_rev)
@@ -206,7 +206,7 @@ def _tagged_action(
     tag_basis: str,
     source: str,
 ) -> dict:
-    tag = primary_tag if primary_tag in TAG_SCHEMA else "LLM_GENERAL"
+    tag = primary_tag if primary_tag in TAG_SCHEMA else "PRODUCT_REC_GENERAL"
     conf = max(0.60, min(0.95, float(confidence)))
 
     return {
@@ -216,12 +216,12 @@ def _tagged_action(
 
         "tag": tag,
         "tag_family": get_tag_family(tag),
-        "priority_base": TAG_SCHEMA.get(tag, TAG_SCHEMA.get("LLM_GENERAL", {})).get("priority_base", 0),
+        "priority_base": TAG_SCHEMA.get(tag, TAG_SCHEMA.get("PRODUCT_REC_GENERAL", {})).get("priority_base", 0),
         "strength_score": get_strength_for_tag(tag),
 
-        "llm_primary_tag": primary_tag,          # keeps existing field name (tags unchanged)
-        "llm_tag_confidence": conf,
-        "llm_tag_basis": tag_basis.strip(),
+        "product_rec_primary_tag": primary_tag,          # keeps existing field name (tags unchanged)
+        "product_rec_tag_confidence": conf,
+        "product_rec_tag_basis": tag_basis.strip(),
         "source": source,
     }
 
@@ -231,11 +231,11 @@ def _tagged_action(
 def generate_collections_nudges(dealer: dict) -> List[dict]:
     actions: List[dict] = []
 
-    due_today = U.to_float(dealer.get("due_today_total", 0), 0.0)
-    due_tomorrow = U.to_float(dealer.get("due_tomorrow_total", 0), 0.0)
-    due_in7 = U.to_float(dealer.get("due_in7_total", 0), 0.0)
-    overdue_amt = U.to_float(dealer.get("overdue_amt_total", 0), 0.0)
-    os_amt = U.to_float(dealer.get("os_amt_total", 0), 0.0)
+    due_today = U.to_float(U.safe_get(dealer, "due_today_total", 0), 0.0)
+    due_tomorrow = U.to_float(U.safe_get(dealer, "due_tomorrow_total", 0), 0.0)
+    due_in7 = U.to_float(U.safe_get(dealer, "due_in7_total", 0), 0.0)
+    overdue_amt = U.to_float(U.safe_get(dealer, "overdue_amt_total", 0), 0.0)
+    os_amt = U.to_float(U.safe_get(dealer, "os_amt_total", 0), 0.0)
 
     # ABSOLUTE PRIORITY: Overdue
     if overdue_amt > 0:
@@ -546,11 +546,11 @@ def generate_rule_nudges(dealer: dict, max_actions: int = 2) -> List[dict]:
             variants = [
                 (
                     f"Up {rev_trend_90:.0f}% vs previous 90 days and above peers. "
-                    "Appreciate + introduce waterproofing/premium line to expand wallet share."
+                    "Appreciate + introduce hero products to expand wallet share."
                 ),
                 (
                     f"Strong growth: +{rev_trend_90:.0f}% vs last 90 days (above peers). "
-                    "Appreciate and pitch 1 premium/waterproofing add-on to increase wallet share."
+                    "Call the dealer and appreciate their performance."
                 ),
                 (
                     f"Dealer is growing (+{rev_trend_90:.0f}% in 90d). "
@@ -612,24 +612,24 @@ def generate_rule_nudges(dealer: dict, max_actions: int = 2) -> List[dict]:
 
             "tag": tag,
             "tag_family": get_tag_family(tag),
-            "priority_base": TAG_SCHEMA.get(tag, TAG_SCHEMA.get("LLM_GENERAL", {})).get("priority_base", 0),
+            "priority_base": TAG_SCHEMA.get(tag, TAG_SCHEMA.get("PRODUCT_REC_GENERAL", {})).get("priority_base", 0),
             "strength_score": get_strength_for_tag(tag),
 
             # RULE => keep fields but don't pretend it's LLM
-            "llm_primary_tag": "",
-            "llm_tag_confidence": conf,
-            "llm_tag_basis": "rule_engine",
+            "product_rec_primary_tag": "",
+            "product_rec_tag_confidence": conf,
+            "product_rec_tag_basis": "rule_engine",
             "source": "rule",
         })
 
     return out
 
 # ======================================================================================
-# 2) “AI” NUDGES (LLM-FREE, deterministic from candidate lists) WITH VARIANTS
+# 2) PRODUCT RECOMMENDATION NUDGES (LLM-FREE, deterministic from candidate lists) WITH VARIANTS
 # ======================================================================================
 def _build_dormant_general(dealer: dict) -> dict:
-    repurchase = _ensure_list(dealer.get("llm_repurchase_recommendations"))
-    terr_hero = _ensure_list(dealer.get("llm_territory_top_products_90d"))
+    repurchase = _ensure_list(U.safe_get(dealer, "llm_repurchase_recommendations"))
+    terr_hero = _ensure_list(U.safe_get(dealer, "llm_territory_top_products_90d"))
 
     basket: List[str] = []
     basket.extend(_pick_names(terr_hero, "product", "base_product", limit=2))
@@ -657,10 +657,10 @@ def _build_dormant_general(dealer: dict) -> dict:
     impact = f"{_impact_range(basis)} this month (basis typical_invoice)"
     tag_basis = f"dormant_override; basis={'typical_invoice' if tiv > 0 else 'baseline_monthly'}"
 
-    return _tagged_action("LLM_GENERAL", do, why, impact, 0.82, tag_basis, "ai")
+    return _tagged_action("PRODUCT_REC_GENERAL", do, why, impact, 0.82, tag_basis, "ai")
 
 def _build_repurchase_bundle(dealer: dict, used_themes: set) -> Optional[Tuple[dict, set]]:
-    repurchase = _ensure_list(dealer.get("llm_repurchase_recommendations"))
+    repurchase = _ensure_list(U.safe_get(dealer, "llm_repurchase_recommendations"))
     if not repurchase:
         return None
 
@@ -699,12 +699,12 @@ def _build_repurchase_bundle(dealer: dict, used_themes: set) -> Optional[Tuple[d
     impact = f"{_impact_range(basis)} this month (basis repurchase_bundle)"
     tag_basis = f"basis={'sum_typical_order_value' if tov_sum > 0 else 'typical_invoice'}"
 
-    a = _tagged_action("LLM_REPURCHASE_DUE", do, why, impact, 0.86, tag_basis, "ai")
+    a = _tagged_action("PRODUCT_REC_REPURCHASE_DUE", do, why, impact, 0.86, tag_basis, "ai")
     return a, (used_themes | rep_themes)
 
 def _build_defend_share(dealer: dict, used_themes: set) -> Optional[Tuple[dict, set]]:
-    dealer_top = _ensure_list(dealer.get("llm_dealer_top_products_90d"))
-    terr_hero = _ensure_list(dealer.get("llm_territory_top_products_90d"))
+    dealer_top = _ensure_list(U.safe_get(dealer, "llm_dealer_top_products_90d"))
+    terr_hero = _ensure_list(U.safe_get(dealer, "llm_territory_top_products_90d"))
 
     anchor_name = None
     basis = 0.0
@@ -743,14 +743,14 @@ def _build_defend_share(dealer: dict, used_themes: set) -> Optional[Tuple[dict, 
     impact = f"{_impact_range(basis)} this month (basis defend_share)"
     tag_basis = f"{basis_field}; defend_share"
 
-    a = _tagged_action("LLM_TERRITORY_HERO", do, why, impact, 0.80, tag_basis, "ai")
+    a = _tagged_action("PRODUCT_REC_TERRITORY_HERO", do, why, impact, 0.80, tag_basis, "ai")
     new_used = set(used_themes)
     if theme:
         new_used.add(theme)
     return a, new_used
 
 def _build_inactive_category(dealer: dict, used_themes: set, blocked_themes: set) -> Optional[Tuple[dict, set]]:
-    inactive = _ensure_list(dealer.get("llm_inactive_categories_90d"))
+    inactive = _ensure_list(U.safe_get(dealer, "llm_inactive_categories_90d"))
     if not inactive:
         return None
 
@@ -786,7 +786,7 @@ def _build_inactive_category(dealer: dict, used_themes: set, blocked_themes: set
         impact = f"{_impact_range(basis)} this month (basis inactive_category)"
         tag_basis = f"peer_mo={peer:.0f}; past_mo={past:.0f}"
 
-        a = _tagged_action("LLM_INACTIVE_CATEGORY", do, why, impact, 0.78, tag_basis, "ai")
+        a = _tagged_action("PRODUCT_REC_INACTIVE_CATEGORY", do, why, impact, 0.78, tag_basis, "ai")
         new_used = set(used_themes)
         new_used.add(theme)
         return a, new_used
@@ -794,7 +794,7 @@ def _build_inactive_category(dealer: dict, used_themes: set, blocked_themes: set
     return None
 
 def _build_cross_sell(dealer: dict, used_themes: set, blocked_themes: set) -> Optional[Tuple[dict, set]]:
-    cross = _ensure_list(dealer.get("llm_territory_products_in_dealer_categories"))
+    cross = _ensure_list(U.safe_get(dealer, "llm_territory_products_in_dealer_categories"))
     if not cross:
         return None
 
@@ -839,13 +839,13 @@ def _build_cross_sell(dealer: dict, used_themes: set, blocked_themes: set) -> Op
     impact = f"{_impact_range(basis)} this month (basis trial_addon)"
     tag_basis = f"peers={peers0:.0f}; bench={bench0:.0f}"
 
-    a = _tagged_action("LLM_CROSS_SELL", do, why, impact, 0.72, tag_basis, "ai")
+    a = _tagged_action("PRODUCT_REC_CROSS_SELL", do, why, impact, 0.72, tag_basis, "ai")
     new_used = set(used_themes)
     new_used |= picked_themes
     return a, new_used
 
 def _build_territory_hero_expand(dealer: dict, used_themes: set, blocked_themes: set) -> Optional[Tuple[dict, set]]:
-    terr = _ensure_list(dealer.get("llm_territory_top_products_90d"))
+    terr = _ensure_list(U.safe_get(dealer, "llm_territory_top_products_90d"))
     if not terr:
         return None
 
@@ -880,7 +880,7 @@ def _build_territory_hero_expand(dealer: dict, used_themes: set, blocked_themes:
         impact = f"{_impact_range(basis)} this month (basis territory_hero)"
         tag_basis = f"bench={bench:.0f}"
 
-        a = _tagged_action("LLM_TERRITORY_HERO", do, why, impact, 0.74, tag_basis, "ai")
+        a = _tagged_action("PRODUCT_REC_TERRITORY_HERO", do, why, impact, 0.74, tag_basis, "ai")
         new_used = set(used_themes)
         if theme:
             new_used.add(theme)
@@ -888,10 +888,10 @@ def _build_territory_hero_expand(dealer: dict, used_themes: set, blocked_themes:
 
     return None
 
-def generate_llm_free_nudges(dealer: dict) -> List[dict]:
+def generate_product_rec_nudges(dealer: dict) -> List[dict]:
     """
     Deterministic replacement for LLM nudges:
-      - Dormant override => exactly 1 action (LLM_GENERAL)
+      - Dormant override => exactly 1 action (PRODUCT_REC_GENERAL)
       - Else => 2-3 actions, max 1 per primary tag
       - High-risk => prioritize repurchase / defend share; avoid cross-sell unless needed
       - No overlap across category themes (best-effort)
@@ -914,67 +914,50 @@ def generate_llm_free_nudges(dealer: dict) -> List[dict]:
         if rep:
             a, used_themes = rep
             actions.append(a)
-            used_primary.add("LLM_REPURCHASE_DUE")
+            used_primary.add("PRODUCT_REC_REPURCHASE_DUE")
 
             # block inactive category overlaps with repurchase themes
-            for it in _ensure_list(dealer.get("llm_repurchase_recommendations")):
+            for it in _ensure_list(U.safe_get(dealer, "llm_repurchase_recommendations")):
                 rep_blocked_themes.add(_theme_key(it.get("category", ""), it.get("sub_category", "")))
 
         defend = _build_defend_share(dealer, used_themes)
-        if defend and "LLM_TERRITORY_HERO" not in used_primary and len(actions) < 2:
+        if defend and "PRODUCT_REC_TERRITORY_HERO" not in used_primary and len(actions) < 2:
             a, used_themes = defend
             actions.append(a)
-            used_primary.add("LLM_TERRITORY_HERO")
+            used_primary.add("PRODUCT_REC_TERRITORY_HERO")
 
     blocked_themes = set(rep_blocked_themes)
 
-    if len(actions) < 3 and "LLM_INACTIVE_CATEGORY" not in used_primary:
+    if len(actions) < 3 and "PRODUCT_REC_INACTIVE_CATEGORY" not in used_primary:
         x = _build_inactive_category(dealer, used_themes, blocked_themes)
         if x:
             a, used_themes = x
             actions.append(a)
-            used_primary.add("LLM_INACTIVE_CATEGORY")
+            used_primary.add("PRODUCT_REC_INACTIVE_CATEGORY")
 
-    if len(actions) < 3 and "LLM_TERRITORY_HERO" not in used_primary:
+    if len(actions) < 3 and "PRODUCT_REC_TERRITORY_HERO" not in used_primary:
         x = _build_territory_hero_expand(dealer, used_themes, blocked_themes)
         if x:
             a, used_themes = x
             actions.append(a)
-            used_primary.add("LLM_TERRITORY_HERO")
+            used_primary.add("PRODUCT_REC_TERRITORY_HERO")
 
-    if len(actions) < 3 and "LLM_CROSS_SELL" not in used_primary:
+    if len(actions) < 3 and "PRODUCT_REC_CROSS_SELL" not in used_primary:
         if (not high_risk) or (high_risk and len(actions) <= 1):
             x = _build_cross_sell(dealer, used_themes, blocked_themes)
             if x:
                 a, used_themes = x
                 actions.append(a)
-                used_primary.add("LLM_CROSS_SELL")
+                used_primary.add("PRODUCT_REC_CROSS_SELL")
 
     if len(actions) < 2:
         defend = _build_defend_share(dealer, used_themes)
-        if defend and "LLM_TERRITORY_HERO" not in used_primary:
+        if defend and "PRODUCT_REC_TERRITORY_HERO" not in used_primary:
             a, used_themes = defend
             actions.append(a)
-            used_primary.add("LLM_TERRITORY_HERO")
+            used_primary.add("PRODUCT_REC_TERRITORY_HERO")
 
     return actions[:3]
-
-# ----------------------------
-# Public API used by app.py
-# ----------------------------
-def generate_ai_nudges(dealer: dict, model=None) -> List[dict]:
-    """
-    LLM-FREE “AI nudges” built deterministically from candidate lists.
-    Keeps signature (model=None) so your app imports don’t break.
-    """
-    return generate_llm_free_nudges(dealer)
-
-def generate_llm_nudges_unused(dealer: dict, model=None) -> List[dict]:
-    """
-    UNUSED STUB (kept for future if you re-enable LLM).
-    Currently returns empty list on purpose.
-    """
-    return []
 
 # ======================================================================================
 # 3) COMBINE + SORT (impact-sort, overdue first always)
@@ -1000,17 +983,16 @@ def _normalize_action(a: dict, source: str) -> dict:
             out[k] = a[k]
     return out
 
-def combine_rule_and_ai_actions(
+def combine_actions(
     rule_actions: List[dict],
-    ai_actions: List[dict],
-    max_rule: int = 2,
-    max_ai: int = 3,
+    product_rec_actions: List[dict],
+    max_nudges: int = 5
 ) -> List[dict]:
     rule_actions = rule_actions or []
-    ai_actions = ai_actions or []
+    product_rec_actions = product_rec_actions or []
 
     rule_norm_all = [_normalize_action(a, "rule") for a in rule_actions]
-    ai_norm = [_normalize_action(a, "ai") for a in ai_actions[:max_ai]]
+    ai_norm = [_normalize_action(a, "ai") for a in product_rec_actions]
 
     # find overdue rule (keep first, doesn’t count against max_rule)
     overdue_rule = None
@@ -1025,8 +1007,6 @@ def combine_rule_and_ai_actions(
         if overdue_rule and ra is overdue_rule:
             continue
         rule_capped.append(ra)
-        if len(rule_capped) >= max_rule:
-            break
 
     # combine with de-dupe
     combined: List[dict] = []
@@ -1065,4 +1045,4 @@ def combine_rule_and_ai_actions(
         rest.sort(key=_impact_score, reverse=True)
         combined = ([overdue] if overdue else []) + rest
 
-    return combined
+    return combined[:max_nudges]

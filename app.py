@@ -1,18 +1,42 @@
 # app.py
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]  # birla/
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import logging
 import pandas as pd
 import streamlit as st
 
 from utils import app_utils as U
 from utils import app_charts as C
-from utils import app_nudges as N
+
+# ------------------------------------------------------------
+# Nudges: NEW (priority) + OLD (legacy)
+# Supports both repo layouts:
+#   - utils.app_* (common)
+#   - utils.app_* (packaged)
+# ------------------------------------------------------------
+try:
+    from utils import app_new_nudges as N_NEW  # type: ignore
+    # from utils import app_nudges as N_OLD      # type: ignore
+except Exception:  # pragma: no cover
+    from utils import app_new_nudges as N_NEW  # type: ignore
+    # from utils import app_nudges as N_OLD      # type: ignore
+
 from utils import app_territory as T
 from utils import app_dealer as D
 from utils import app_state as S
 from utils import app_data as DATA
 from utils import app_ui as UI
+from utils.config import config
 
-# MUST be the first Streamlit call
+FEATURES = getattr(config, "features", {}) or {}
+ENABLE_COLLECTIONS = FEATURES.get("overdue", False)
+ENABLE_RECO = FEATURES.get("product_recs", False)
+
 st.set_page_config(page_title="TSM Action Dashboard", page_icon="🎯", layout="wide")
 
 # -----------------------------
@@ -24,7 +48,8 @@ logger = logging.getLogger(__name__)
 # -----------------------------
 # Config
 # -----------------------------
-FILE_PATH = "clustered_dealer_master_improved_with_prodrecs.csv"
+FILE_PATH = config.proc_path("final_dealer_master")
+FILE_PATH = FILE_PATH.replace("../", "")
 
 COLOR_MAP = {
     "OVERDUE": "#dc2626",
@@ -37,41 +62,197 @@ COLOR_MAP = {
     "GAP_VS_PEERS": "#0891b2",
 }
 
-def _get_ai_actions_cache(max_items: int = 120):
-    if "ai_actions_by_dealer" not in st.session_state:
-        st.session_state.ai_actions_by_dealer = {}
-
-    cache = st.session_state.ai_actions_by_dealer
-
-    # Soft cap: keep only the most recent ~max_items keys
-    if len(cache) > max_items:
-        # dict preserves insertion order in Py3.7+
-        for k in list(cache.keys())[: len(cache) - max_items]:
-            cache.pop(k, None)
-
-    return cache
-
 # -----------------------------
 # Init
 # -----------------------------
 S.AppState.init()
 UI.inject_css()
 
+# ============================================================
+# NUDGES: Combining + Rendering (UPDATED for Territory+ASM multi)
+# ============================================================
+def _dedupe_nudges(nudges):
+    """
+    De-dupe by (tag, level, classification).
+    IMPORTANT: tags may repeat across territory vs asm now; do NOT dedupe purely on tag.
+    """
+    seen = set()
+    out = []
+    for n in (nudges or []):
+        if not isinstance(n, dict):
+            continue
+        tag = str(n.get("tag") or "").strip()
+        lvl = str(n.get("level") or "").strip()
+        cls = str(n.get("classification") or "").strip()
+        key = (tag, lvl, cls)
+        if tag and key in seen:
+            continue
+        if tag:
+            seen.add(key)
+        out.append(n)
+    return out
+
+
+def generate_combined_rule_nudges(dealer: dict):
+    """
+    New nudges first, then legacy nudges; remove duplicates.
+    NOTE: Since NEW now produces BOTH territory+ASM variants, dedupe considers level/classification.
+    """
+    new_nudges = []
+    old_nudges = []
+    try:
+        new_nudges = N_NEW.generate_rule_nudges(dealer) or []
+    except Exception:
+        new_nudges = []
+    # try:
+    #     old_nudges = N_OLD.generate_rule_nudges(dealer) or []
+    # except Exception:
+    #     old_nudges = []
+
+    return _dedupe_nudges(list(new_nudges) + list(old_nudges))
+
+
+def _get_tags(rule_nudges: list[dict], prefix: str) -> list[str]:
+    """Return all tags matching a prefix, preserving order."""
+    out = []
+    for n in (rule_nudges or []):
+        tag = str(n.get("tag") or "")
+        if tag.startswith(prefix):
+            out.append(tag)
+    return out
+
+
+def _ordering_bucket_label(tag: str) -> str:
+    mapping = {
+        "ORDERING_NEW_NO_ORDERS": "New Dealer • No orders yet",
+        "ORDERING_NEW_LOW": "New Dealer • Low orders (Upsell)",
+        "ORDERING_NEW_HIGH": "New Dealer • High orders (Cross-sell)",
+        "ORDERING_INACTIVE_CATEGORY": "Existing Dealer • Inactive category (Reorder)",
+        "ORDERING_INACTIVE_90D": "Existing Dealer • Inactive 90+ days (Reactivate)",
+        "ORDERING_UNDERPERFORMER": "Existing Dealer • Underperformer (Upsell)",
+        "ORDERING_GOOD_PERFORMER": "Existing Dealer • Good performer (Cross-sell)",
+        "ORDERING_ASM_CADENCE_GAP": "ASM • Cadence gap",
+    }
+    return mapping.get(tag, "Ordering Bucket")
+
+
+def _payment_bucket_label(tag: str) -> str:
+    mapping = {
+        "PAY_OD_DEALER": "OD Dealers (Credit blocked)",
+        "PAY_NEARING_OD": "At Risk (CEI<70) • Nearing OD",
+        "PAY_PAYMENT_DISCIPLINE": "At Risk (CEI<70) • Payment Discipline",
+        "PAY_GOOD_PAYER_NEARING_OD": "Good Payer (CEI≥70) • Nearing OD Reminder",
+        "PAY_GOOD_PAYER": "Good Payer (CEI≥70) • Maintain discipline",
+    }
+    return mapping.get(tag, "Payment Bucket")
+
+
+def _badge_for_level(level: str) -> str:
+    s = (level or "").strip().lower()
+    if s == "asm":
+        return "ASM"
+    if s == "territory":
+        return "Territory"
+    if s == "dealer":
+        return "Dealer"
+    return (level or "Level").upper()
+
+
+def _group_rule_nudges(rule_nudges: list[dict]) -> dict:
+    """
+    Group nudges for clean UI:
+      - payments
+      - ordering_territory
+      - ordering_asm
+      - ordering_other (dealer/unknown)
+      - other (everything else)
+    """
+    groups = {
+        "payments": [],
+        "ordering_territory": [],
+        "ordering_asm": [],
+        "ordering_other": [],
+        "other": [],
+    }
+    for n in (rule_nudges or []):
+        ntype = str(n.get("nudge_type") or "").strip().lower()
+        tag = str(n.get("tag") or "")
+        lvl = str(n.get("level") or "").strip().lower()
+        
+        if ntype == "payment" or tag.startswith("PAY_") or tag.startswith("PAYMENT_"):
+            groups["payments"].append(n)
+        elif ntype == "ordering" or tag.startswith("ORDERING_"):
+            if lvl == "territory":
+                groups["ordering_territory"].append(n)
+            elif lvl == "asm":
+                groups["ordering_asm"].append(n)
+            else:
+                groups["ordering_other"].append(n)
+        else:
+            groups["other"].append(n)
+    return groups
+
+
+def _render_action_cards(nudges: list[dict], title: str):
+    if not nudges:
+        return
+
+    st.markdown(f"### {title}")
+    for i, action in enumerate(nudges, 1):
+        impact_html = ""
+        if action.get("impact"):
+            impact_html = f"<div class='action-impact'>💰 Impact: {UI.esc(action['impact'])}</div>"
+
+        lvl_badge = _badge_for_level(str(action.get("level") or ""))
+        cls = str(action.get("classification") or "").strip()
+        cls_badge = f" • {UI.esc(cls)}" if cls else ""
+
+        st.markdown(
+            f"""
+            <div class='action-card'>
+                <div class='action-title'>
+                    {UI.esc(action.get('do',''))}
+                    <span style='background:#111827;color:white;padding:0.25rem 0.5rem;border-radius:4px;
+                                 font-size:0.7rem;margin-left:0.5rem;'>
+                        {UI.esc(action.get('tag',''))}
+                    </span>
+                    <span style='background:#334155;color:white;padding:0.25rem 0.5rem;border-radius:4px;
+                                 font-size:0.7rem;margin-left:0.5rem;'>
+                        {UI.esc(lvl_badge)}{cls_badge}
+                    </span>
+                </div>
+                <div class='action-why'><strong>Why:</strong> {UI.esc(action.get('why',''))}</div>
+                {impact_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+# ============================================================
+# Navigation callbacks
+# ============================================================
 def _on_territory_change():
     t = st.session_state.get("territory_select")
     if t:
         S.AppState.navigate_to_territory(t)
+
 
 def _on_dealer_change_from_territory():
     d = st.session_state.get("dealer_in_territory_select")
     if d:
         S.AppState.navigate_to_dealer(d)
 
+
 def _on_dealer_change_direct():
     d = st.session_state.get("dealer_select")
     if d:
         S.AppState.navigate_to_dealer(d)
 
+
+# ============================================================
+# Existing sections (unchanged except small safety)
+# ============================================================
 def render_dealer_charts_section(dealer: dict) -> None:
     """Charts in ONE ROW (like before)."""
     has_no_orders = U.safe_get(dealer, "has_no_orders", 0)
@@ -87,18 +268,19 @@ def render_dealer_charts_section(dealer: dict) -> None:
 
     with c1:
         fig = C.create_revenue_benchmark_chart(dealer)
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
     with c2:
         fig = C.create_order_frequency_benchmark(dealer)
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
     with c3:
         fig = C.create_subbrand_mix_chart(dealer)
         if fig:
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No sub-brand data available for this dealer.")
+
 
 def render_territory_dashboard(df: pd.DataFrame, territory_name: str, show_debug: bool = False) -> None:
     territory_df = DATA.get_territory_df(df, territory_name)
@@ -106,15 +288,8 @@ def render_territory_dashboard(df: pd.DataFrame, territory_name: str, show_debug
         st.error(f"No data found for territory: {territory_name}")
         return
 
-    if show_debug:
-        # with st.expander("🔧 Debug Info"):
-        #     st.write(f"Territory dealers: {len(territory_df)}")
-        #     st.write(f"Columns available: {list(territory_df.columns)}")
-        pass
-
     asm = territory_df["asm_name"].iloc[0] if "asm_name" in territory_df.columns else "N/A"
 
-    # Territory header should match dealer header styling (same CSS class)
     st.markdown(
         f"""
         <div class='dealer-header'>
@@ -125,7 +300,6 @@ def render_territory_dashboard(df: pd.DataFrame, territory_name: str, show_debug
         unsafe_allow_html=True,
     )
 
-    # A) Health
     health = T.calculate_territory_health(territory_df)
     st.subheader("🏥 Territory Health Snapshot")
 
@@ -145,48 +319,48 @@ def render_territory_dashboard(df: pd.DataFrame, territory_name: str, show_debug
         status = "healthy" if health["revenue_trend_pct"] >= 0 else "attention" if health["revenue_trend_pct"] >= -5 else "risk"
         UI.metric_card("Revenue (90d)", U.fmt_rs(health["total_revenue_90d"]), f"{health['revenue_trend_pct']:+.0f}% vs prev", status)
 
-    st.markdown("---")
+    if ENABLE_COLLECTIONS:
+        st.markdown("---")
+        collections = T.calculate_territory_collections(territory_df)
+        st.subheader("💰 Territory Collections Snapshot")
 
-    # B) Collections
-    collections = T.calculate_territory_collections(territory_df)
-    st.subheader("💰 Territory Collections Snapshot")
+        r1 = st.columns(3)
+        r2 = st.columns(4)
+        with r1[0]:
+            UI.metric_card("Total Overdue", U.fmt_rs(collections["total_overdue"]), "Needs action", "risk" if collections["total_overdue"] > 0 else "healthy")
+        with r1[1]:
+            UI.metric_card("Total Outstanding", U.fmt_rs(collections["total_os"]), "Open invoices", "attention" if collections["total_os"] > 0 else "healthy")
+        with r1[2]:
+            UI.metric_card("Due Today", U.fmt_rs(collections["total_due_today"]), "Prioritize today’s calls", "risk" if collections["total_due_today"] > 0 else "healthy")
 
-    r1 = st.columns(3)
-    r2 = st.columns(4)
-
-    with r1[0]:
-        UI.metric_card("Total Overdue", U.fmt_rs(collections["total_overdue"]), "Needs action", "risk" if collections["total_overdue"] > 0 else "healthy")
-    with r1[1]:
-        UI.metric_card("Total Outstanding", U.fmt_rs(collections["total_os"]), "Open invoices", "attention" if collections["total_os"] > 0 else "healthy")
-    with r1[2]:
-        UI.metric_card("Due Today", U.fmt_rs(collections["total_due_today"]), "Prioritize today’s calls", "risk" if collections["total_due_today"] > 0 else "healthy")
-    
-    with r2[0]:
-        UI.metric_card("Due Today Only", U.fmt_rs(collections["total_due_today_only"]), "Call today", "attention" if collections["total_due_today_only"] > 0 else "healthy")
-    with r2[1]:
-        UI.metric_card("Due Tomorrow", U.fmt_rs(collections["total_due_tomorrow"]), "Prep tomorrow", "attention" if collections["total_due_tomorrow"] > 0 else "healthy")
-    with r2[2]:
-        UI.metric_card("Due in 7 Days", U.fmt_rs(collections["total_due_in7"]), "Plan this week", "attention" if collections["total_due_in7"] > 0 else "healthy")
-    with r2[3]:
-        pct = (collections["dealers_with_overdue"] / max(1, health["total_dealers"])) * 100
-        status = "risk" if pct >= 25 else "attention" if pct >= 10 else "healthy"
-        UI.metric_card("Dealers with Overdues", f"{collections['dealers_with_overdue']}", f"{pct:.0f}% of territory", status)
+        with r2[0]:
+            UI.metric_card("Due Today Only", U.fmt_rs(collections["total_due_today_only"]), "Call today", "attention" if collections["total_due_today_only"] > 0 else "healthy")
+        with r2[1]:
+            UI.metric_card("Due Tomorrow", U.fmt_rs(collections["total_due_tomorrow"]), "Prep tomorrow", "attention" if collections["total_due_tomorrow"] > 0 else "healthy")
+        with r2[2]:
+            UI.metric_card("Due in 7 Days", U.fmt_rs(collections["total_due_in7"]), "Plan this week", "attention" if collections["total_due_in7"] > 0 else "healthy")
+        with r2[3]:
+            pct = (collections["dealers_with_overdue"] / max(1, health["total_dealers"])) * 100
+            status = "risk" if pct >= 25 else "attention" if pct >= 10 else "healthy"
+            UI.metric_card("Dealers with Overdues", f"{collections['dealers_with_overdue']}", f"{pct:.0f}% of territory", status)
 
     st.markdown("---")
 
-    # C) Action list
     action_df = T.generate_combined_call_list(territory_df, top_n=200)
 
     st.subheader("🎯 Today's Action List")
     st.markdown("*Priority ranked list - select what to include + optional reason filters.*")
 
     rowA = st.columns([1, 1], vertical_alignment="center")
+    option_list = ["Sales risk", "Opportunities"]
+    if ENABLE_COLLECTIONS:
+        option_list.append("Collections")
     with rowA[0]:
         st.caption("Include in ranking")
         include_sel = st.segmented_control(
             "Include",
-            options=["Collections", "Sales risk", "Opportunities"],
-            default=["Collections", "Sales risk", "Opportunities"],
+            options=option_list,
+            default=option_list,
             selection_mode="multi",
             label_visibility="collapsed",
         )
@@ -245,11 +419,46 @@ def render_territory_dashboard(df: pd.DataFrame, territory_name: str, show_debug
         on_open=S.AppState.navigate_to_dealer,
     )
 
-    st.info(
-        f"📊 Overdue Concentration: Top 10 dealers = **{collections['overdue_concentration_pct']:.0f}%** "
-        "of total overdue - focus collection here."
-    )
+    if ENABLE_COLLECTIONS:
+        st.info(
+            f"📊 Overdue Concentration: Top 10 dealers = **{collections['overdue_concentration_pct']:.0f}%** "
+            "of total overdue - focus collection here."
+        )
 
+def _prio_class(p: str) -> str:
+    p = (p or "").strip().upper()
+    if p == "HIGH":
+        return "high"
+    if p == "MODERATE":
+        return "moderate"
+    if p == "LOW":
+        return "low"
+    return "none"
+
+def _render_reco_cards_compact(items, max_items: int = 3):
+    if not items:
+        st.info("No data available")
+        return
+    items = (items or [])[:max_items]
+    for it in items:
+        name = UI.esc(it.get("name", "N/A"))
+        pr = (it.get("priority") or "").strip().upper()
+        why = UI.esc(it.get("why") or "")
+        border_color = "#48bb78" if pr == "HIGH" else "#ed8936" if pr == "MODERATE" else "#a0aec0"
+        st.markdown(
+            f"""<div class='action-card' style='border-left-color:{border_color};padding:1rem;margin:0.5rem 0;'>
+  <div class='action-title' style='font-size:0.95rem;'>
+    {name}
+    <span style='background:#111827;color:white;padding:0.2rem 0.5rem;border-radius:4px;font-size:0.65rem;margin-left:0.5rem;'>{UI.esc(pr)}</span>
+  </div>
+  <div class='action-why' style='font-size:0.85rem;margin-top:0.3rem;'>{why}</div>
+</div>""",
+            unsafe_allow_html=True,
+        )
+
+# ============================================================
+# Dealer Dashboard (UPDATED nudges rendering)
+# ============================================================
 def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
     dfi = st.session_state.get("df_indexed")
     if dfi is None or dealer_id not in dfi.index:
@@ -257,7 +466,7 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
         return
 
     dealer = dfi.loc[dealer_id].to_dict()
-    # ---- HEADER (FIX: must render as HTML) ----
+
     stamp = D.get_dealer_stamp(dealer)
     UI.render_dealer_header(
         customer_name=U.safe_get(dealer, "customer_name", U.safe_get(dealer, "dealer_composite_id", "")),
@@ -269,55 +478,125 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
         stamp_label=stamp,
     )
 
-    # Badges
     badges = D.get_dealer_badges(dealer)
     if badges:
         UI.render_badges(badges)
 
-    # Status
     status_level, status_text, status_msg = D.get_dealer_status(dealer)
     UI.render_status_banner(status_level, status_text, status_msg)
-    
+
     st.subheader("🎯 Dealer Action Plan")
 
-    # 1) Always compute rule nudges immediately (2 items)
-    rule_nudges = N.generate_rule_nudges(dealer)  # already returns normalized-ish dicts
-    dealer_key = U.safe_get(dealer, "dealer_composite_id", None) or dealer_id
-
-    # 2) Auto-generate AI nudges (cached per dealer so reruns are cheap)
-    ai_cache = _get_ai_actions_cache()
-    if dealer_key not in ai_cache:
-        ai_cache[dealer_key] = N.generate_ai_nudges(dealer)  # deterministic, fast
-    ai_nudges = ai_cache[dealer_key]
-
-    # 4) Combine into ONE output format: first 2 rule + next 3 AI
-    combined_actions = N.combine_rule_and_ai_actions(rule_nudges, ai_nudges, max_rule=2, max_ai=3)
-
-    if not combined_actions:
-        st.info("No actions available for this dealer.")
-    else:
-        for i, action in enumerate(combined_actions, 1):
+    # All nudges together
+    rule_nudges = generate_combined_rule_nudges(dealer)
+    if rule_nudges:
+        for i, action in enumerate(rule_nudges, 1):
+            lvl = str(action.get("level") or "").strip().lower()
+            cls = str(action.get("classification") or "").strip()
+            
+            lvl_text = ""
+            if lvl == "asm":
+                lvl_text = "ASM benchmark"
+            elif lvl == "territory":
+                lvl_text = "Territory benchmark"
+            
+            tag_badge = f"<span style='background:#111827;color:white;padding:0.25rem 0.5rem;border-radius:4px;font-size:0.7rem;margin-left:0.5rem;'>{UI.esc(action.get('tag',''))}</span>"
+            
+            lvl_badge = ""
+            if lvl_text:
+                lvl_badge = f"<span style='background:#334155;color:white;padding:0.25rem 0.5rem;border-radius:4px;font-size:0.7rem;margin-left:0.5rem;'>{UI.esc(lvl_text)}</span>"
+            
+            impact_html = ""
+            if action.get("impact"):
+                impact_html = f"<div style='margin-top:0.5rem;font-size:0.85rem;color:#4a5568;'><strong>💰 Impact:</strong> {UI.esc(action['impact'])}</div>"
 
             st.markdown(
                 f"""
                 <div class='action-card'>
-                    <div class='action-title'>
-                        Action {i}: {UI.esc(action.get('do',''))}
-                        <span style='background: #111827; color: white; padding: 0.25rem 0.5rem;
-                                    border-radius: 4px; font-size: 0.7rem; margin-left: 0.5rem;'>
-                            {UI.esc(action.get('tag',''))}
-                        </span>
-                    </div>
-                    <div class='action-why'><strong>Why:</strong> {UI.esc(action.get('why',''))}</div>
-                    <div class='action-impact'>💰 Impact: {UI.esc(action.get('impact',''))}</div>
+                    <div class='action-title'>{UI.esc(action.get('do',''))}{tag_badge}{lvl_badge}</div>
+                    <div class='action-why' style='margin-top:0.5rem;'><strong>Why:</strong> {UI.esc(action.get('why',''))}</div>
+                    {impact_html}
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            
+    else:
+        st.info("✅ No urgent actions for this dealer.")
+
+    # ------------------------------------------------------------
+    # Dealer classification (SHOW ALL matched buckets now)
+    # ------------------------------------------------------------
     st.markdown("---")
-        
-    # 8 Core metrics (keep your existing logic, just using UI.metric_card)
+    st.subheader("🧩 Dealer Classification")
+
+    pay_tags = _get_tags(rule_nudges, "PAY_")
+    ord_tags = _get_tags(rule_nudges, "ORDERING_")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Payments**")
+        if pay_tags:
+            for t in pay_tags:
+                st.caption(f"• **{_payment_bucket_label(t)}**  •  `{t}`")
+        else:
+            st.caption("• No payment bucket matched")
+
+    with c2:
+        st.markdown("**Ordering Pattern**")
+        if ord_tags:
+            # show label + level (important now)
+            for n in (rule_nudges or []):
+                tag = str(n.get("tag") or "")
+                if not tag.startswith("ORDERING_"):
+                    continue
+                lvl = _badge_for_level(str(n.get("level") or ""))
+                st.caption(f"• **{_ordering_bucket_label(tag)}**  •  `{tag}`  •  _{lvl}_")
+        else:
+            st.caption("• No ordering bucket matched")
+
+    # Product Recommendations
+    st.markdown("---")
+    st.subheader("📦 Product Recommendations")
+
+    prod_ui = N_NEW.generate_product_rec_nudges(dealer)
+
+    # Dealer level
+    st.markdown("**Dealer**")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption("Most Ordered (Upsell)")
+        _render_reco_cards_compact(prod_ui.get("dealer_most_ordered"))
+    with c2:
+        st.caption("Repurchase Due (Upsell)")
+        _render_reco_cards_compact(prod_ui.get("dealer_repurchase"))
+
+    # Territory level
+    # st.markdown("**Territory**")
+    # t1, t2 = st.columns(2)
+    # with t1:
+    #     st.caption("Heroes Not Buying (Cross-sell within categories)")
+    #     _render_reco_cards_compact(prod_ui.get("territory_heroes"))
+    # with t2:
+    #     st.caption("New Categories (Cross-sell outside categories)")
+    #     _render_reco_cards_compact(prod_ui.get("territory_new_categories"))
+
+    # ASM level (keys must match generate_product_rec_nudges in app_new_nudges)
+    # Keep 2 columns to avoid cramped cards/UI breakage.
+    st.markdown("**ASM**")
+    a1, a2 = st.columns(2)
+    with a1:
+        st.caption("ASM Heroes (Cross-sell, based on dealer's top product categories)")
+        _render_reco_cards_compact(prod_ui.get("asm_hero_top"))
+    with a2:
+        st.caption("ASM heroes in dealer categories (Cross-sell, based on similar dealers in area (same dealer category))")
+        _render_reco_cards_compact(prod_ui.get("asm_hero_in_dealer_categories"))
+
+    st.caption("New categories (cross-sell outside)")
+    _render_reco_cards_compact(prod_ui.get("area_new_categories"))
+
+    st.markdown("---")
+
+    # Rest of metrics section
     st.subheader("📊 Key Metrics (Last 90 days)")
 
     has_no_orders = U.safe_get(dealer, "has_no_orders", 0)
@@ -360,7 +639,6 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
         else:
             dsl = U.safe_get(dealer, "days_since_last_order", 0)
             avg_gap = U.safe_get(dealer, "avg_order_gap_180d", 0)
-
             if avg_gap > 0 and dsl >= 2 * avg_gap:
                 status = "risk"
             elif dsl <= 30:
@@ -369,7 +647,6 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
                 status = "attention"
             else:
                 status = "risk"
-
             cycle_text = f"Generally orders every {avg_gap:.0f} days" if avg_gap > 0 else ("Recently ordered" if dsl <= 30 else "Overdue - follow up" if dsl <= 45 else "URGENT - Very overdue")
             UI.metric_card("Days Since Last Order", f"{int(dsl)} days", cycle_text, status)
 
@@ -435,53 +712,38 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
             else:
                 UI.metric_card("Avg Order Value (90d)", U.fmt_rs(aov), f"📉 Ticket size down {abs(aov_trend):.0f}%", "attention")
 
-    # ---- FIX: Collections section should show if ANY collections numbers exist (not only overdue/due_today) ----
-    coll_vals = DATA.get_dealer_collections_numbers(dealer)
-    if coll_vals["show"]:
-        st.markdown("---")
-        st.subheader("💰 Outstanding Overview")
+    if ENABLE_COLLECTIONS:
+        coll_vals = DATA.get_dealer_collections_numbers(dealer)
+        if coll_vals["show"]:
+            st.markdown("---")
+            st.subheader("💰 Outstanding Overview")
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            overdue = coll_vals["overdue"]
+            os_total = coll_vals["os_total"]
+            due_today = coll_vals["due_today"]
+            due_today_only = coll_vals["due_today_only"]
+            due_tomorrow = coll_vals["due_tomorrow"]
+            due_in7 = coll_vals["due_in7"]
+            with c1:
+                status = "risk" if overdue > 0 else "healthy"
+                UI.metric_card("Overdue Amount", U.fmt_rs(overdue), "Action needed!" if overdue > 0 else "Clear", status)
+            with c2:
+                pct_overdue = f"{(overdue / os_total * 100):.0f}% overdue" if os_total > 0 else "N/A"
+                UI.metric_card("Total Outstanding", U.fmt_rs(os_total), pct_overdue, "attention" if os_total > 100000 else "healthy")
+            with c3:
+                UI.metric_card("Due Today Only", U.fmt_rs(due_today_only), "CALL NOW" if due_today_only > 0 else "None", "risk" if due_today_only > 0 else "healthy")
+            with c4:
+                UI.metric_card("Due Today", U.fmt_rs(due_today), "CALL NOW" if due_today > 0 else "None", "risk" if due_today > 0 else "healthy")
+            with c5:
+                UI.metric_card("Due Tomorrow", U.fmt_rs(due_tomorrow), "Reminder call" if due_tomorrow > 0 else "None", "attention" if due_tomorrow > 0 else "healthy")
+            with c6:
+                UI.metric_card("Due in 7 Days", U.fmt_rs(due_in7), "Watch list" if due_in7 > 0 else "None", "attention" if due_in7 > 0 else "healthy")
 
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-
-        overdue = coll_vals["overdue"]
-        os_total = coll_vals["os_total"]
-        due_today = coll_vals["due_today"]
-        due_today_only = coll_vals["due_today_only"]
-        due_tomorrow = coll_vals["due_tomorrow"]
-        due_in7 = coll_vals["due_in7"]
-
-        with c1:
-            status = "risk" if overdue > 0 else "healthy" 
-            UI.metric_card("Overdue Amount", U.fmt_rs(overdue), "Action needed!" if overdue > 0 else "Clear", status)
-
-        with c2:
-            pct_overdue = f"{(overdue / os_total * 100):.0f}% overdue" if os_total > 0 else "N/A"
-            UI.metric_card("Total Outstanding", U.fmt_rs(os_total), pct_overdue, "attention" if os_total > 100000 else "healthy")
-        
-        with c3:
-            UI.metric_card("Due Today Only", U.fmt_rs(due_today_only), "CALL NOW" if due_today_only > 0 else "None", "risk" if due_today_only > 0 else "healthy")
-
-        with c4:
-            UI.metric_card("Due Today", U.fmt_rs(due_today), "CALL NOW" if due_today > 0 else "None", "risk" if due_today > 0 else "healthy")
-
-        with c5:
-            UI.metric_card("Due Tomorrow", U.fmt_rs(due_tomorrow), "Reminder call" if due_tomorrow > 0 else "None", "attention" if due_tomorrow > 0 else "healthy")
-
-        with c6:
-            UI.metric_card("Due in 7 Days", U.fmt_rs(due_in7), "Watch list" if due_in7 > 0 else "None", "attention" if due_in7 > 0 else "healthy")
-
-    # Charts (ONE ROW)
-    render_dealer_charts_section(dealer)
-
-    # ---- RESTORE: Tabs + AI nudges block (was in your older version) ----
     st.markdown("---")
     tab1, tab2 = st.tabs(["📊 Details", "ℹ️ How to Use"])
-
     with tab1:
         st.subheader("Additional Details")
-
         c1, c2 = st.columns(2)
-
         with c1:
             st.markdown("### Revenue Breakdown")
             if has_no_orders == 1:
@@ -492,7 +754,6 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
                 st.metric("Previous 90 days", U.fmt_rs(U.safe_get(dealer, "total_revenue_prev_90d", 0)))
                 st.metric("Lifetime Revenue", U.fmt_rs(U.safe_get(dealer, "total_revenue_lifetime", 0)))
                 st.metric("Avg Order Value (90d)", U.fmt_rs(U.safe_get(dealer, "avg_order_value_last_90d", 0)))
-
         with c2:
             st.markdown("### Territory Position")
             if has_no_orders == 0:
@@ -501,27 +762,23 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
                 st.metric("Territory Rank", f"#{rank} of {total}")
             else:
                 st.info("Territory ranking not applicable - no orders yet")
-
             tenure = U.to_int(U.safe_get(dealer, "tenure_months", 0))
             st.metric("Tenure", f"{tenure} months")
-
             is_new = U.safe_get(dealer, "is_new_dealer", 0)
             dealer_type = "🆕 New Dealer (Last 30 days)" if is_new == 1 else "Existing Dealer"
             st.metric("Dealer Type", dealer_type)
-
         if has_no_orders == 0:
             st.markdown("### Product Mix & Gaps")
             missing_cats, low_share_cats = D.get_product_gaps(dealer)
             UI.render_product_gaps(missing_cats, low_share_cats)
-
     with tab2:
         st.markdown(UI.HOW_TO_USE_MD)
+
 
 def render_quick_nav_sidebar() -> None:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⚡ Quick Actions")
 
-    # Add current dealer to recent list
     if st.session_state.get("view") == S.AppState.VIEW_DEALER and st.session_state.get("selected_dealer"):
         S.AppState.remember_recent_dealer(st.session_state["selected_dealer"])
 
@@ -565,59 +822,34 @@ def main() -> None:
             df = st.session_state.df
 
             st.markdown("---")
-            st.subheader("🔍 Find Dealer/Territory")
+            st.subheader("🔍 Find Dealer")
 
-            search_type = st.radio("View:", ["Territory", "Dealer"], label_visibility="collapsed", key="search_type")
+            st.radio("View:", ["Dealer"], label_visibility="collapsed", key="search_type")
 
-            territory_list = sorted(df["territory_name"].dropna().unique().tolist())
-            if territory_list and st.session_state.selected_territory is None:
-                S.AppState.navigate_to_territory(territory_list[0])
+            dealer_list = sorted(df["dealer_composite_id"].dropna().unique().tolist())
+            if dealer_list and st.session_state.selected_dealer is None:
+                S.AppState.navigate_to_dealer(dealer_list[0])
 
-            if search_type == "Territory":
-                selected_territory = st.selectbox(
-                    "Territory:", territory_list, key="territory_select", on_change=_on_territory_change
-                )
-                if st.button("View Territory Dashboard", key="btn_view_territory"):
-                    S.AppState.navigate_to_territory(selected_territory)
-                    st.rerun()
+            selected_dealer = st.selectbox(
+                "Dealer ID:", dealer_list, key="dealer_select", on_change=_on_dealer_change_direct
+            )
+            if st.button("View Dealer Dashboard", key="btn_view_dealer"):
+                S.AppState.navigate_to_dealer(selected_dealer)
+                st.rerun()
 
-                st.markdown("---")
-                st.markdown("**Or select dealer in this territory:**")
-                dealers_in_territory = (
-                    df[df["territory_name"] == selected_territory]["dealer_composite_id"].dropna().unique().tolist()
-                )
-                dealers_in_territory = sorted(dealers_in_territory)
-                selected_dealer = st.selectbox(
-                    "Select Dealer:", dealers_in_territory, key="dealer_in_territory_select",
-                    on_change=_on_dealer_change_from_territory
-                )
-                if st.button("View Dealer Dashboard", key="btn_view_dealer_from_territory"):
-                    S.AppState.navigate_to_dealer(selected_dealer)
-                    st.rerun()
-
-            else:
-                dealer_list = sorted(df["dealer_composite_id"].dropna().unique().tolist())
-                selected_dealer = st.selectbox(
-                    "Dealer ID:", dealer_list, key="dealer_select", on_change=_on_dealer_change_direct
-                )
-                if st.button("View Dealer Dashboard", key="btn_view_dealer"):
-                    S.AppState.navigate_to_dealer(selected_dealer)
-                    st.rerun()
         render_quick_nav_sidebar()
 
     # Main routing
     if st.session_state.df is None:
         st.markdown("<h1 class='main-header'>🎯 TSM Action Dashboard</h1>", unsafe_allow_html=True)
-        st.info("👈 **Get Started:** Load your dealer data and select a dealer/territory from the sidebar")
+        st.info("👈 **Get Started:** Load your dealer data and select a dealer from the sidebar")
         return
 
-    if st.session_state.view == S.AppState.VIEW_TERRITORY and st.session_state.selected_territory:
-        render_territory_dashboard(st.session_state.df, st.session_state.selected_territory, show_debug=st.session_state.get("debug_mode", False))
-    elif st.session_state.view == S.AppState.VIEW_DEALER and st.session_state.selected_dealer:
+    if st.session_state.view == S.AppState.VIEW_DEALER and st.session_state.selected_dealer:
         render_dealer_dashboard(st.session_state.df, st.session_state.selected_dealer)
     else:
         st.markdown("<h1 class='main-header'>🎯 TSM Action Dashboard</h1>", unsafe_allow_html=True)
-        st.info("👈 **Get Started:** Select a Territory or Dealer from the sidebar")
+        st.info("👈 **Get Started:** Select a Dealer from the sidebar")
 
 
 if __name__ == "__main__":
