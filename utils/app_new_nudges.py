@@ -28,7 +28,6 @@ import json
 import math
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
-from utils import app_utils as U
 
 import pandas as pd
 
@@ -298,11 +297,11 @@ def fmt_currency(amount: float) -> str:
         amount = 0.0
 
     if amount >= 10_000_000:
-        return f"Rs. {amount/10_000_000:.1f}Cr"
+        return f"Rs. {amount / 10_000_000:.1f}Cr"
     if amount >= 100_000:
-        return f"Rs. {amount/100_000:.1f}L"
+        return f"Rs. {amount / 100_000:.1f}L"
     if amount >= 1_000:
-        return f"Rs. {amount/1_000:.0f}K"
+        return f"Rs. {amount / 1_000:.0f}K"
     return f"Rs. {int(amount)}"
 
 
@@ -526,9 +525,9 @@ def _fmt_growth_phrase(pct: Any) -> str:
     except Exception:
         v = 0.0
     
-    if v<0:
+    if v < 0:
         return f"shrunk by {abs(v):.0f}%"
-    elif v>0:
+    elif v > 0:
         return f"grew by {v:.0f}%"
     else:
         return "is dormant"
@@ -539,9 +538,9 @@ def _fmt_growth_phrase_only(pct: Any) -> str:
         v = float(pct or 0)
     except Exception:
         v = 0.0
-    if v<0:
+    if v < 0:
         return f"shrunk by {abs(v):.0f}%"
-    elif v>0:
+    elif v > 0:
         return f"grew by only {v:.0f}%"
     else:
         return "is dormant"
@@ -1158,9 +1157,7 @@ def _make_peer_based_nudges(
     peer_monthly = _peer_monthly_sim(dealer, level)
     peer_growth_opt = _peer_growth_pct_sim(dealer, level)
 
-    hero_str = asm_hero_str
     hero_items = asm_hero_items
-    bench_label = "similar category dealers in the Area"
 
     dealer_monthly = _monthly_runrate_from_90d(revenue_90d)
 
@@ -1424,7 +1421,10 @@ def generate_ordering_nudges(dealer: dict) -> List[Dict[str, Any]]:
 
     revenue_90d = _to_float(safe_get(dealer, "total_revenue_last_90d", 0), 0.0)
 
-    dealer_growth = _growth_pct(safe_get(dealer,"pct_revenue_trend_90d_winsorized",
+    dealer_growth = _growth_pct(
+        safe_get(
+            dealer,
+            "pct_revenue_trend_90d_winsorized",
             safe_get(dealer, "pct_revenue_trend_90d", 0),
         )
     )
@@ -1458,14 +1458,15 @@ def generate_ordering_nudges(dealer: dict) -> List[Dict[str, Any]]:
 
     inactive_cat_items, inactive_peer_typical = _inactive_categories_info(dealer)
     # inactive_cat_names = _pick_category_names(inactive_cat_items, limit=None)
-    terr_hero_items = (
-        _ensure_list_of_dicts(safe_get(dealer, "llm_territory_products_in_dealer_categories", []))
-        or _ensure_list_of_dicts(safe_get(dealer, "llm_territory_top_products_90d", []))
+    terr_hero_in_cat = _ensure_list_of_dicts(
+        safe_get(dealer, "llm_territory_products_in_dealer_categories", [])
     )
-    asm_hero_items = (
-        _ensure_list_of_dicts(safe_get(dealer, "llm_asm_products_in_dealer_categories", []))
-        or _ensure_list_of_dicts(safe_get(dealer, "llm_asm_top_products_90d", []))
-    )
+    terr_hero_top = _ensure_list_of_dicts(safe_get(dealer, "llm_territory_top_products_90d", []))
+    terr_hero_items = terr_hero_in_cat or terr_hero_top
+
+    asm_hero_in_cat = _ensure_list_of_dicts(safe_get(dealer, "llm_asm_products_in_dealer_categories", []))
+    asm_hero_top = _ensure_list_of_dicts(safe_get(dealer, "llm_asm_top_products_90d", []))
+    asm_hero_items = asm_hero_in_cat or asm_hero_top
     
     nudges.extend(
         _make_peer_based_nudges(
@@ -1813,8 +1814,9 @@ def generate_product_rec_nudges(dealer: dict) -> Dict[str, Any]:
     dealer_top = _ensure_list_of_dicts(safe_get(dealer, "llm_dealer_top_products_90d", []))
     repurchase = _ensure_list_of_dicts(safe_get(dealer, "llm_repurchase_recommendations", []))
 
-    terr_heroes_src = _ensure_list_of_dicts(safe_get(dealer, "llm_territory_products_in_dealer_categories", [])) or \
-                      _ensure_list_of_dicts(safe_get(dealer, "llm_territory_top_products_90d", []))
+    terr_in_cat = _ensure_list_of_dicts(safe_get(dealer, "llm_territory_products_in_dealer_categories", []))
+    terr_top_f = _ensure_list_of_dicts(safe_get(dealer, "llm_territory_top_products_90d", []))
+    terr_heroes_src = terr_in_cat or terr_top_f
 
     asm_in_cat_only = _ensure_list_of_dicts(safe_get(dealer, "llm_asm_products_in_dealer_categories", []))
     asm_top_only = _ensure_list_of_dicts(safe_get(dealer, "llm_asm_top_products_90d", []))

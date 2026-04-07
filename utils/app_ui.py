@@ -286,9 +286,9 @@ def render_nba(rule_nudges: list[dict]) -> None:
     for i, nudge in enumerate(rule_nudges or [], 1):
         tag_badge = (
             f"<span style='background: rgba(255,255,255,0.3); padding: 0.25rem 0.5rem; "
-            f"border-radius: 4px; font-size: 0.75rem; margin-left: 0.5rem;'>{esc(nudge.get('tag',''))}</span>"
+            f"border-radius: 4px; font-size: 0.75rem; margin-left: 0.5rem;'>{esc(nudge.get('tag', ''))}</span>"
         )
-        nba_html += f"<div class='nba-action'><strong>{i}.</strong> {esc(nudge.get('text',''))} {tag_badge}</div>"
+        nba_html += f"<div class='nba-action'><strong>{i}.</strong> {esc(nudge.get('text', ''))} {tag_badge}</div>"
     nba_html += "</div>"
     st.markdown(nba_html, unsafe_allow_html=True)
     
@@ -316,7 +316,7 @@ def render_action_cards(
         html_card = f"""
         <div class='action-card' style='margin: 0.5rem 0;'>
             <div class='action-title'>
-                {esc(row.get('customer_name',''))} ({esc(dealer_id)})
+                {esc(row.get('customer_name', ''))} ({esc(dealer_id)})
                 <span style='float:right;background:#667eea;color:white;padding:0.25rem 0.6rem;
                              border-radius:4px;font-size:0.75rem;'>Score: {score:.0f}</span>
             </div>
@@ -345,7 +345,7 @@ def render_product_gaps(missing_cats, low_share_cats) -> None:
         if missing_cats:
             pg_html += "<strong>Not buying yet:</strong> " + ", ".join([esc(x) for x in missing_cats]) + "<br>"
         if low_share_cats:
-            low_strs = [f"{esc(label)} (~{share*100:.0f}% of sales)" for label, share in low_share_cats]
+            low_strs = [f"{esc(label)} (~{share * 100:.0f}% of sales)" for label, share in low_share_cats]
             pg_html += "<strong>Low share categories:</strong> " + ", ".join(low_strs)
         pg_html += "<br><br>💡 Use these as primary cross-sell focus areas in your next visit."
     pg_html += "</div>"

@@ -6,12 +6,12 @@ ROOT = Path(__file__).resolve().parents[2]  # birla/
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import logging
-import pandas as pd
-import streamlit as st
+import logging  # noqa: E402
+import pandas as pd  # noqa: E402
+import streamlit as st  # noqa: E402
 
-from utils import app_utils as U
-from utils import app_charts as C
+from utils import app_utils as U  # noqa: E402
+from utils import app_charts as C  # noqa: E402
 
 # ------------------------------------------------------------
 # Nudges: NEW (priority) + OLD (legacy)
@@ -26,16 +26,14 @@ except Exception:  # pragma: no cover
     from utils import app_new_nudges as N_NEW  # type: ignore
     # from utils import app_nudges as N_OLD      # type: ignore
 
-from utils import app_territory as T
-from utils import app_dealer as D
-from utils import app_state as S
-from utils import app_data as DATA
-from utils import app_ui as UI
-from utils.config import config
+from utils import app_territory as T  # noqa: E402
+from utils import app_dealer as D  # noqa: E402
+from utils import app_state as S  # noqa: E402
+from utils import app_data as DATA  # noqa: E402
+from utils import app_ui as UI  # noqa: E402
 
-FEATURES = getattr(config, "features", {}) or {}
-ENABLE_COLLECTIONS = FEATURES.get("overdue", False)
-ENABLE_RECO = FEATURES.get("product_recs", False)
+ENABLE_COLLECTIONS = False
+ENABLE_RECO = True
 
 st.set_page_config(page_title="TSM Action Dashboard", page_icon="🎯", layout="wide")
 
@@ -48,7 +46,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------
 # Config
 # -----------------------------
-FILE_PATH = config.proc_path("final_dealer_master")
+FILE_PATH = "processed_final_dealer_master_mar26.csv"
 FILE_PATH = FILE_PATH.replace("../", "")
 
 COLOR_MAP = {
@@ -211,17 +209,17 @@ def _render_action_cards(nudges: list[dict], title: str):
             f"""
             <div class='action-card'>
                 <div class='action-title'>
-                    {UI.esc(action.get('do',''))}
+                    {UI.esc(action.get('do', ''))}
                     <span style='background:#111827;color:white;padding:0.25rem 0.5rem;border-radius:4px;
                                  font-size:0.7rem;margin-left:0.5rem;'>
-                        {UI.esc(action.get('tag',''))}
+                        {UI.esc(action.get('tag', ''))}
                     </span>
                     <span style='background:#334155;color:white;padding:0.25rem 0.5rem;border-radius:4px;
                                  font-size:0.7rem;margin-left:0.5rem;'>
                         {UI.esc(lvl_badge)}{cls_badge}
                     </span>
                 </div>
-                <div class='action-why'><strong>Why:</strong> {UI.esc(action.get('why',''))}</div>
+                <div class='action-why'><strong>Why:</strong> {UI.esc(action.get('why', ''))}</div>
                 {impact_html}
             </div>
             """,
@@ -492,15 +490,14 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
     if rule_nudges:
         for i, action in enumerate(rule_nudges, 1):
             lvl = str(action.get("level") or "").strip().lower()
-            cls = str(action.get("classification") or "").strip()
-            
+
             lvl_text = ""
             if lvl == "asm":
                 lvl_text = "ASM benchmark"
             elif lvl == "territory":
                 lvl_text = "Territory benchmark"
             
-            tag_badge = f"<span style='background:#111827;color:white;padding:0.25rem 0.5rem;border-radius:4px;font-size:0.7rem;margin-left:0.5rem;'>{UI.esc(action.get('tag',''))}</span>"
+            tag_badge = f"<span style='background:#111827;color:white;padding:0.25rem 0.5rem;border-radius:4px;font-size:0.7rem;margin-left:0.5rem;'>{UI.esc(action.get('tag', ''))}</span>"
             
             lvl_badge = ""
             if lvl_text:
@@ -513,8 +510,8 @@ def render_dealer_dashboard(df: pd.DataFrame, dealer_id: str) -> None:
             st.markdown(
                 f"""
                 <div class='action-card'>
-                    <div class='action-title'>{UI.esc(action.get('do',''))}{tag_badge}{lvl_badge}</div>
-                    <div class='action-why' style='margin-top:0.5rem;'><strong>Why:</strong> {UI.esc(action.get('why',''))}</div>
+                    <div class='action-title'>{UI.esc(action.get('do', ''))}{tag_badge}{lvl_badge}</div>
+                    <div class='action-why' style='margin-top:0.5rem;'><strong>Why:</strong> {UI.esc(action.get('why', ''))}</div>
                     {impact_html}
                 </div>
                 """,

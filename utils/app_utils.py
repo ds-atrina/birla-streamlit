@@ -68,11 +68,11 @@ def fmt_rs(x):
     try:
         val = to_float(x)
         if val >= 10000000:
-            return f"₹{val/10000000:.2f}Cr"
+            return f"₹{val / 10000000:.2f}Cr"
         elif val >= 100000:
-            return f"₹{val/100000:.2f}L"
+            return f"₹{val / 100000:.2f}L"
         elif val >= 1000:
-            return f"₹{val/1000:.1f}K"
+            return f"₹{val / 1000:.1f}K"
         else:
             return f"₹{val:.0f}"
     except Exception:
